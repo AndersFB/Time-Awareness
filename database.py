@@ -1,10 +1,8 @@
 import datetime
 from functools import wraps
-
-from peewee import (
-    SqliteDatabase, Model, DateTimeField, FloatField, TextField, DatabaseProxy
-)
+from pathlib import Path
 from loguru import logger
+from peewee import SqliteDatabase, Model, DateTimeField, FloatField, TextField, DatabaseProxy
 
 database_proxy = DatabaseProxy()
 
@@ -21,16 +19,26 @@ class MetaData(BaseModel):
     key = TextField(unique=True)
     value = TextField()
 
-def configure_database(**kwargs):
-    """Configure the database. Supports 'sqlite' or 'mysql'."""
-    logger.info(f"Configuring database: kwargs={kwargs}")
-    db = SqliteDatabase(kwargs.get('database', 'app.db'), autoconnect=False)
+def configure_database(database: Path):
+    """
+    Configure and initialize the SQLite database connection using the provided path.
+
+    Args:
+        database (Path): Path to the SQLite database file.
+
+    Returns:
+        SqliteDatabase: The configured database instance.
+    """
+    logger.info(f"Configuring database: {database}")
+    db = SqliteDatabase(database.as_posix(), autoconnect=False)
     database_proxy.initialize(db)
     logger.info(f"Database configured successfully: {db}")
     return db
 
 def with_database(func):
-    """Decorator to handle database connections."""
+    """
+    Decorator to ensure database connection is open for the wrapped function.
+    """
     @wraps(func)
     def wrapper(*args, **kwargs):
         # Check if database is already connected
@@ -50,12 +58,25 @@ def with_database(func):
 
 @with_database
 def create_tables_if_not_exist():
-    """Create tables if they don't exist."""
+    """
+    Create Session and MetaData tables if they do not exist.
+    """
     database_proxy.create_tables([Session, MetaData], safe=True)
     logger.info("Tables created successfully")
 
 @with_database
 def save_session(start, end, duration) -> bool:
+    """
+    Save a session record to the database.
+
+    Args:
+        start (datetime): Session start time.
+        end (datetime): Session end time.
+        duration (timedelta): Duration of the session.
+
+    Returns:
+        bool: True if saved successfully, False otherwise.
+    """
     try:
         Session.create(start=start, end=end, duration=duration.total_seconds())
         logger.info("Session saved: {} - {} (duration: {})", start, end, duration)
@@ -66,6 +87,12 @@ def save_session(start, end, duration) -> bool:
 
 @with_database
 def get_session_history():
+    """
+    Retrieve all session records from the database.
+
+    Returns:
+        list: List of tuples (start, end, duration).
+    """
     try:
         history = [
             (s.start, s.end, datetime.timedelta(seconds=s.duration))
@@ -79,6 +106,16 @@ def get_session_history():
 
 @with_database
 def set_metadata(key, value) -> bool:
+    """
+    Set a metadata key-value pair.
+
+    Args:
+        key (str): Metadata key.
+        value (Any): Metadata value.
+
+    Returns:
+        bool: True if set successfully, False otherwise.
+    """
     try:
         MetaData.insert(key=key, value=str(value)).on_conflict_replace().execute()
         logger.info("Metadata set: {} = {}", key, value)
@@ -89,6 +126,16 @@ def set_metadata(key, value) -> bool:
 
 @with_database
 def get_metadata(key: str, default=None):
+    """
+    Get a metadata value by key.
+
+    Args:
+        key (str): Metadata key.
+        default (Any): Default value if key not found.
+
+    Returns:
+        Any: Metadata value or default.
+    """
     try:
         entry = MetaData.get_or_none(MetaData.key == key)
         logger.debug("Metadata fetched: {} = {}", key, entry.value if entry else default)
@@ -99,6 +146,15 @@ def get_metadata(key: str, default=None):
 
 @with_database
 def get_sessions_since(since_dt: datetime.datetime):
+    """
+    Get sessions started since a given datetime.
+
+    Args:
+        since_dt (datetime): Start datetime.
+
+    Returns:
+        list: List of tuples (start, end, duration).
+    """
     try:
         query = Session.select().where(Session.start >= since_dt).order_by(Session.start)
         history = [
@@ -113,6 +169,12 @@ def get_sessions_since(since_dt: datetime.datetime):
 
 @with_database
 def get_sessions_by_weekday():
+    """
+    Get sessions grouped by weekday.
+
+    Returns:
+        dict: Mapping weekday (int) to list of durations (timedelta).
+    """
     try:
         weekday_histories = {}
         for s in Session.select():
@@ -129,6 +191,12 @@ def get_sessions_by_weekday():
 
 @with_database
 def get_all_sessions():
+    """
+    Get all session records.
+
+    Returns:
+        list: List of tuples (start, end, duration).
+    """
     try:
         history = [
             (s.start, s.end, datetime.timedelta(seconds=s.duration))
@@ -142,6 +210,15 @@ def get_all_sessions():
 
 @with_database
 def get_sessions_for_day(day: datetime.date):
+    """
+    Get all sessions for a specific day.
+
+    Args:
+        day (date): The day to fetch sessions for.
+
+    Returns:
+        list: List of tuples (start, end, duration).
+    """
     try:
         start_dt = datetime.datetime.combine(day, datetime.time.min)
         end_dt = datetime.datetime.combine(day, datetime.time.max)
@@ -160,6 +237,12 @@ def get_sessions_for_day(day: datetime.date):
 
 @with_database
 def get_previous_session():
+    """
+    Get the most recent session.
+
+    Returns:
+        tuple or None: (start, end, duration) of previous session, or None if none exist.
+    """
     try:
         session = Session.select().order_by(Session.start.desc()).first()
         if session:
@@ -179,6 +262,12 @@ def get_previous_session():
 
 @with_database
 def get_days_tracked():
+    """
+    Get the number of unique days with tracked sessions.
+
+    Returns:
+        int: Number of days tracked.
+    """
     try:
         days = set()
         for s in Session.select(Session.start):

@@ -21,13 +21,13 @@ class TimeAwareness:
                  start_daemon: bool = False,
                  poll_interval: float = 5.0):
         """
-        Initialize the TimeAwareness instance.
+        Initialize the TimeAwareness instance and optionally start the background daemon.
 
         Args:
             app_dir (Path): Directory for storing state and logs.
             end_session_idle_threshold (int): Idle threshold in minutes to end session.
             start_daemon (bool): If True, start the daemon in a background thread.
-            poll_interval (float): Daemon idle check interval (seconds).
+            poll_interval (float): Daemon idle check interval in seconds.
         """
         self._setup(app_dir)
 
@@ -42,10 +42,10 @@ class TimeAwareness:
 
     def _setup(self, app_dir: Path):
         """
-        Set up logging to a file in the application directory.
+        Set up logging and database in the specified application directory.
 
         Args:
-            app_dir (Path): Directory for log file.
+            app_dir (Path): Directory for log file and database.
         """
         if not app_dir.exists():
             app_dir.mkdir(parents=True)
@@ -62,7 +62,7 @@ class TimeAwareness:
 
     def save_state(self):
         """
-        Persist session state to database.
+        Save the current session state (today's total time) to the database.
         """
         saved = set_metadata("today_total", self.today_total)
         if not saved:
@@ -70,13 +70,13 @@ class TimeAwareness:
 
     def load_state(self):
         """
-        Load session state from database.
+        Load the session state (today's total time) from the database.
         """
         self.today_total = float(get_metadata("today_total", 0))
 
     def start_session(self):
         """
-        Start a new session. Ends any existing session first.
+        Start a new session. If a session is already active, end it first.
         """
         if self.current_session is not None:
             self.end_session()
@@ -86,13 +86,10 @@ class TimeAwareness:
 
     def end_session(self) -> Optional[datetime.timedelta]:
         """
-        End the current session and record its duration.
+        End the current session, record its duration, and update today's total time.
 
         Returns:
-            datetime.timedelta: Duration of the ended session.
-
-        Raises:
-            ValueError: If no session is currently started.
+            Optional[datetime.timedelta]: Duration of the ended session, or None if no session was active.
         """
         if self.current_session is None:
             logger.warning("Attempted to end session, but no session was started.")
@@ -111,13 +108,11 @@ class TimeAwareness:
 
     def current_session_info(self) -> Optional[Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]:
         """
-        Get information about the current session.
+        Get information about the currently active session.
 
         Returns:
-            tuple: (start_time, current_time, duration)
-
-        Raises:
-            ValueError: If no session is currently started.
+            Optional[Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]:
+                Tuple of (start_time, current_time, duration), or None if no session is active.
         """
         if self.current_session is None:
             logger.warning("No session started.")
@@ -128,13 +123,11 @@ class TimeAwareness:
 
     def previous_session(self) -> Optional[Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]:
         """
-        Get the previous session's information.
+        Retrieve information about the most recently ended session.
 
         Returns:
-            tuple: (start_time, end_time, duration)
-
-        Raises:
-            ValueError: If no previous sessions exist.
+            Optional[Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]:
+                Tuple of (start_time, end_time, duration), or None if no previous session exists.
         """
         session = get_previous_session()
         if session is None:
@@ -143,28 +136,28 @@ class TimeAwareness:
 
     def days_tracked(self) -> int:
         """
-        Get the number of unique days tracked.
+        Get the number of unique days for which sessions have been tracked.
 
         Returns:
-            int: Number of days with sessions.
+            int: Number of days with recorded sessions.
         """
         return get_days_tracked()
 
     def total_time_today(self) -> datetime.timedelta:
         """
-        Get the total time tracked today.
+        Get the total time tracked for the current day.
 
         Returns:
-            datetime.timedelta: Total time today.
+            datetime.timedelta: Total time tracked today.
         """
         return datetime.timedelta(seconds=self.today_total)
 
     def total_time_yesterday(self) -> datetime.timedelta:
         """
-        Get the total time tracked yesterday.
+        Get the total time tracked for the previous day.
 
         Returns:
-            datetime.timedelta: Total time yesterday.
+            datetime.timedelta: Total time tracked yesterday.
         """
         yesterday = datetime.datetime.now().date() - datetime.timedelta(days=1)
         history = get_sessions_for_day(yesterday)
@@ -173,10 +166,10 @@ class TimeAwareness:
 
     def seven_day_average(self) -> datetime.timedelta:
         """
-        Get the average session duration over the last seven days.
+        Calculate the average tracked time per day over the last seven days.
 
         Returns:
-            datetime.timedelta: Seven-day average duration.
+            datetime.timedelta: Average daily tracked time for the last seven days.
         """
         seven_days_ago = datetime.datetime.now() - datetime.timedelta(days=7)
         history = get_sessions_since(seven_days_ago)
@@ -188,10 +181,10 @@ class TimeAwareness:
 
     def weekday_average(self) -> datetime.timedelta:
         """
-        Get the average session duration per weekday.
+        Calculate the average tracked time per weekday.
 
         Returns:
-            datetime.timedelta: Weekday average duration.
+            datetime.timedelta: Average tracked time per weekday.
         """
         weekday_histories = get_sessions_by_weekday()
         averages = []
@@ -204,10 +197,10 @@ class TimeAwareness:
 
     def total_average(self) -> datetime.timedelta:
         """
-        Get the average session duration over all sessions.
+        Calculate the average session duration across all recorded sessions.
 
         Returns:
-            datetime.timedelta: Total average duration.
+            datetime.timedelta: Average session duration for all sessions.
         """
         history = get_all_sessions()
         if not history:
@@ -220,7 +213,8 @@ class TimeAwareness:
         Get a summary of session history and statistics.
 
         Returns:
-            dict: Dictionary with days tracked, totals, averages, and session history.
+            dict: Dictionary containing days tracked, today's and yesterday's totals,
+                  seven-day and weekday averages, total average, and session history.
         """
         history = get_session_history()
         return {
@@ -235,12 +229,13 @@ class TimeAwareness:
 
     def get_idle_time(self) -> datetime.timedelta:
         """
-        Returns the idle time (no mouse/keyboard activity).
+        Detect and return the current idle time (no mouse/keyboard activity).
 
         Returns:
-            datetime.timedelta: Idle time.
+            datetime.timedelta: Idle time since last user activity.
 
-        Supports Linux (xprintidle) and macOS (ioreg).
+        Notes:
+            Supports Linux (xprintidle) and macOS (ioreg). Returns zero for unsupported platforms.
         """
         try:
             if sys.platform.startswith("linux"):
@@ -267,15 +262,17 @@ class TimeAwareness:
             return datetime.timedelta(seconds=0)
 
     def quit_daemon(self):
-        """Signal the daemon thread to exit and end any active session."""
+        """
+        Signal the daemon thread to exit and end any active session.
+        """
         self._daemon_stop_event.set()
         if self.current_session is not None:
             self.end_session()
 
     def run_daemon(self, poll_interval: float = 5.0):
         """
-        Runs the time awareness daemon in the background.
-        Starts/ends sessions based on user activity.
+        Run the time awareness daemon in the background, starting and ending sessions
+        based on user activity.
 
         Args:
             poll_interval (float): Time in seconds between idle checks.

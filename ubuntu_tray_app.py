@@ -1,5 +1,3 @@
-import datetime
-
 import gi
 gi.require_version('AppIndicator3', '0.1')
 gi.require_version('Gtk', '3.0')
@@ -7,16 +5,12 @@ from gi.repository import AppIndicator3, Gtk, GLib
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 from loguru import logger
+import datetime
 
 from time_awareness import TimeAwareness
 
 APP_ID = "time_awareness_tray"
 APP_DIR = Path.home() / ".time_awareness"
-
-# Setup loguru logger to APP_DIR/app.log
-logger.remove()
-logger.add(str(APP_DIR / "app.log"), rotation="10 MB", retention="10 days")
-logger.info("Ubuntu tray app started. Logging to {}", APP_DIR / "app.log")
 
 def format_duration(td: datetime.timedelta) -> str:
     if td is None:
@@ -25,7 +19,7 @@ def format_duration(td: datetime.timedelta) -> str:
     hours, remainder = divmod(total_seconds, 3600)
     minutes = (remainder // 60)
     if hours > 0:
-        return f"{hours}h {minutes}m."
+        return f"{hours}h. {minutes}m."
     else:
         return f"{minutes}m."
 
@@ -41,6 +35,9 @@ def format_date(dt: datetime.datetime) -> str:
 
 class TrayApp:
     def __init__(self):
+        """
+        Initialize the tray application, indicator, and menu.
+        """
         self.ta = TimeAwareness(APP_DIR, start_daemon=True)
         self.indicator = AppIndicator3.Indicator.new(
             APP_ID, "", AppIndicator3.IndicatorCategory.APPLICATION_STATUS
@@ -57,6 +54,9 @@ class TrayApp:
         logger.info("TrayApp initialized.")
 
     def build_menu(self):
+        """
+        Build the tray menu with session info, controls, and history.
+        """
         self.menu.foreach(lambda widget: self.menu.remove(widget))
 
         # Current session (dimmed/grey)
@@ -153,6 +153,9 @@ class TrayApp:
         self.menu.show_all()
 
     def update_menu_items(self):
+        """
+        Update dynamic menu items with current session and history data.
+        """
         # Update only relevant menu items
         try:
             start, now, duration = self.ta.current_session_info()
@@ -175,6 +178,15 @@ class TrayApp:
         self.menu_items["prev_date"].set_label(prev_date_label)
 
     def render_icon(self, td: datetime.timedelta) -> Path:
+        """
+        Render a tray icon showing the current session duration.
+
+        Args:
+            td (timedelta): Duration to display.
+
+        Returns:
+            Path: Path to the generated icon image.
+        """
         # Format as "15 m." or "1h 15m."
         text = format_duration(td)
         # Create image
@@ -191,6 +203,9 @@ class TrayApp:
         return self.icon_file
 
     def update_icon(self):
+        """
+        Update the tray icon to reflect the current session duration.
+        """
         try:
             _, _, duration = self.ta.current_session_info()
         except Exception:
@@ -199,11 +214,20 @@ class TrayApp:
         self.indicator.set_icon(icon_path)
 
     def refresh(self):
+        """
+        Refresh the tray icon and menu items.
+
+        Returns:
+            bool: True to continue periodic refresh.
+        """
         self.update_icon()
         self.update_menu_items()
         return True  # continue timer
 
     def on_disable(self, widget):
+        """
+        End the current session via the tray menu.
+        """
         try:
             self.ta.end_session()
             logger.info("Session ended via tray menu.")
@@ -212,11 +236,17 @@ class TrayApp:
         self.refresh()
 
     def on_new_session(self, widget):
+        """
+        Start a new session via the tray menu.
+        """
         self.ta.start_session()
         logger.info("New session started via tray menu.")
         self.refresh()
 
     def on_history(self, widget):
+        """
+        Show a dialog with session history and statistics.
+        """
         hist = self.ta.history()
         logger.info("History dialog opened. Sessions: {}", len(hist['history']))
         # Show a simple dialog with history summary
@@ -237,6 +267,9 @@ class TrayApp:
         dialog.destroy()
 
     def on_quit(self, widget):
+        """
+        Quit the tray application and clean up resources.
+        """
         logger.info("Tray app quitting via menu.")
         self.ta.quit_daemon()  # Stop the daemon thread if running
         Gtk.main_quit()
@@ -244,6 +277,9 @@ class TrayApp:
             self.icon_file.unlink()
 
 def main():
+    """
+    Entry point for the tray application.
+    """
     TrayApp()
     Gtk.main()
 
