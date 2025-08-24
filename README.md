@@ -1,6 +1,6 @@
 # Time Awareness
 
-> **Inspired by the macOS app [Pandan](https://sindresorhus.com/pandan) by Sindre Sorhus.**
+> **Inspired by the MacOS app [Pandan](https://sindresorhus.com/pandan) by Sindre Sorhus.**
 
 Time Awareness is a simple productivity tool that tracks your computer usage sessions, providing daily summaries and statistics. It features a tray icon for Ubuntu (and other Linux desktops) that allows you to quickly view your current session, total time today, previous sessions, and more.
 
