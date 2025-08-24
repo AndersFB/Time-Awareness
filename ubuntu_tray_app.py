@@ -53,7 +53,7 @@ class TrayApp:
         self.build_menu()
         self.indicator.set_menu(self.menu)
         self.update_icon()
-        GLib.timeout_add_seconds(30, self.refresh)  # update every 30s
+        GLib.timeout_add_seconds(10, self.refresh)  # update every 10s
         logger.info("TrayApp initialized.")
 
     def build_menu(self):
