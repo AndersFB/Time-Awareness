@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Tuple, Optional
 from loguru import logger
 import threading
+import logging
 
 from database import (
     save_session, get_session_history,
@@ -47,6 +48,9 @@ class TimeAwareness:
         Args:
             app_dir (Path): Directory for log file and database.
         """
+        # Silence peewee logging
+        logging.getLogger("peewee").setLevel(logging.CRITICAL)
+
         if not app_dir.exists():
             app_dir.mkdir(parents=True)
 
