@@ -52,11 +52,13 @@ class TimeAwareness:
 
         log_path = app_dir / "timeawareness.log"
         logger.add(str(log_path), rotation="10 MB", retention="10 days")
-        logger.info("TimeAwareness initialized. Logging to {}", log_path)
+        logger.info("Log file created at {}", log_path)
 
         db_path = app_dir / "timeawareness.sqlite"
+        logger.info("Database path set to {}", db_path)
         configure_database(database=db_path)
         create_tables_if_not_exist()
+        logger.info("Database configured and tables checked/created.")
 
     def save_state(self):
         """
