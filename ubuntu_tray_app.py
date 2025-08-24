@@ -68,7 +68,7 @@ class TrayApp:
         self.menu.append(item_current)
 
         try:
-            start, now, duration = self.ta.get_current_session()
+            start, now, duration = self.ta.current_session_info()
             started_label = f"Started at {format_time(start)}"
         except Exception:
             started_label = "Not running"
@@ -155,7 +155,7 @@ class TrayApp:
     def update_menu_items(self):
         # Update only relevant menu items
         try:
-            start, now, duration = self.ta.get_current_session()
+            start, now, duration = self.ta.current_session_info()
             started_label = f"Started at {format_time(start)}"
         except Exception:
             started_label = "Not running"
@@ -192,7 +192,7 @@ class TrayApp:
 
     def update_icon(self):
         try:
-            _, _, duration = self.ta.get_current_session()
+            _, _, duration = self.ta.current_session_info()
         except Exception:
             duration = datetime.timedelta(seconds=0)
         icon_path = self.render_icon(duration)

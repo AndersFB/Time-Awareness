@@ -54,7 +54,7 @@ def history():
 def current():
     """Show current session info."""
     try:
-        start, now, duration = get_ta().get_current_session()
+        start, now, duration = get_ta().current_session_info()
         typer.echo(f"Session started: {start}")
         typer.echo(f"Now: {now}")
         typer.echo(f"Duration: {duration}")
@@ -67,7 +67,7 @@ def live(interval: float = 1.0):
     try:
         while True:
             try:
-                start, now, duration = get_ta().get_current_session()
+                start, now, duration = get_ta().current_session_info()
                 typer.echo(f"\rSession started: {start} | Now: {now} | Duration: {duration}", nl=False)
             except Exception as e:
                 typer.echo(f"\rError: {e}                          ", nl=False)

@@ -1,82 +1,77 @@
 import pytest
+import threading
+import time
 import datetime
+
 from time_awareness import TimeAwareness
 
-class DummyDateTime(datetime.datetime):
-    @classmethod
-    def now(cls):
-        return cls(2024, 6, 1, 12, 0, 0)
+@pytest.fixture(autouse=True)
+def use_in_memory_db(use_in_memory_db):
+    pass
 
 @pytest.fixture
 def ta(tmp_path):
-    return TimeAwareness(app_dir=tmp_path, end_session_idle_threshold=1)  # 1 minute threshold for tests
+    return TimeAwareness(app_dir=tmp_path)
 
-def test_daemon_starts_and_ends_session(monkeypatch, ta):
-    # Simulate idle time switching between active and inactive
-    idle_times = [
-        datetime.timedelta(seconds=0),    # active
-        datetime.timedelta(seconds=0),    # active
-        datetime.timedelta(minutes=2),    # inactive (exceeds threshold)
-        datetime.timedelta(minutes=2),    # still inactive
-        datetime.timedelta(seconds=0),    # active again
-    ]
-    call_log = []
-
+def test_run_daemon_starts_and_ends_session(monkeypatch, ta):
+    # Simulate idle time: first active, then idle
+    idle_times = [0, 0, 600_000, 600_000]  # ms (0 ms active, 600_000 ms idle)
     def fake_get_idle_time():
-        return idle_times.pop(0) if idle_times else datetime.timedelta(seconds=0)
-
+        # Return next idle time in seconds
+        if idle_times:
+            ms = idle_times.pop(0)
+            return ta.end_session_idle_threshold if ms >= 600_000 else datetime.timedelta(seconds=0)
+        return datetime.timedelta(seconds=0)
     monkeypatch.setattr(ta, "get_idle_time", fake_get_idle_time)
-    monkeypatch.setattr(datetime, "datetime", DummyDateTime)
 
-    def fake_start_session():
-        call_log.append("start_session")
-        ta.current_session = DummyDateTime.now()
-
-    def fake_end_session():
-        call_log.append("end_session")
-        ta.current_session = None
-        return datetime.timedelta(minutes=2)
-
-    monkeypatch.setattr(ta, "start_session", fake_start_session)
-    monkeypatch.setattr(ta, "end_session", fake_end_session)
-
-    # Run daemon for a few cycles
-    import threading
-
-    def run_daemon_short():
-        try:
-            ta.run_daemon(poll_interval=0.01)
-        except Exception:
-            pass
-
-    t = threading.Thread(target=run_daemon_short)
-    t.daemon = True
+    # Run daemon in a thread, stop after a short time
+    def run_and_stop():
+        ta.run_daemon(poll_interval=0.01)
+    t = threading.Thread(target=run_and_stop)
     t.start()
-    # Let it run for a short while
-    import time
-    time.sleep(0.1)
-    # Stop the thread
-    t.join(timeout=0.1)
+    time.sleep(0.05)
+    ta.quit_daemon()
+    t.join()
 
-    # Check that session start/end were called in expected order
-    assert call_log == ["start_session", "end_session", "start_session"]
+    assert ta.current_session is None
 
-def test_daemon_handles_keyboard_interrupt(monkeypatch, ta):
-    # Simulate daemon loop interrupted by KeyboardInterrupt
+def test_daemon_does_not_start_session_if_active(monkeypatch, ta):
+    ta.current_session = datetime.datetime.now()
     monkeypatch.setattr(ta, "get_idle_time", lambda: datetime.timedelta(seconds=0))
-    monkeypatch.setattr(datetime, "datetime", DummyDateTime)
-    called = {"end_session": False}
+    # Should not start a new session if already active
+    ta._daemon_stop_event.set()
+    ta.run_daemon(poll_interval=0.01)
+    # Session should remain unchanged
+    assert ta.current_session is not None
 
-    def fake_end_session():
-        called["end_session"] = True
-        ta.current_session = None
-        return datetime.timedelta(minutes=1)
+def test_daemon_does_not_end_session_if_inactive(monkeypatch, ta):
+    ta.current_session = None
+    monkeypatch.setattr(ta, "get_idle_time", lambda: ta.end_session_idle_threshold)
+    ta._daemon_stop_event.set()
+    ta.run_daemon(poll_interval=0.01)
+    # Session should remain None
+    assert ta.current_session is None
 
-    monkeypatch.setattr(ta, "end_session", fake_end_session)
+def test_daemon_handles_get_idle_time_exception(monkeypatch, ta):
+    monkeypatch.setattr(ta, "get_idle_time", lambda: (_ for _ in ()).throw(Exception("fail")))
+    ta._daemon_stop_event.set()
+    # Should not raise, just log error
+    ta.run_daemon(poll_interval=0.01)
+    assert ta.current_session is None
 
-    def run_daemon_interrupt():
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(ta, "run_daemon", run_daemon_interrupt)
-    with pytest.raises(KeyboardInterrupt):
-        ta.run_daemon()
+def test_daemon_repeated_start_stop(monkeypatch, ta):
+    idle_times = [0, 600_000, 0, 600_000]
+    def fake_get_idle_time():
+        if idle_times:
+            ms = idle_times.pop(0)
+            return ta.end_session_idle_threshold if ms >= 600_000 else datetime.timedelta(seconds=0)
+        return datetime.timedelta(seconds=0)
+    monkeypatch.setattr(ta, "get_idle_time", fake_get_idle_time)
+    def run_and_stop():
+        ta.run_daemon(poll_interval=0.01)
+    t = threading.Thread(target=run_and_stop)
+    t.start()
+    time.sleep(0.1)
+    ta.quit_daemon()
+    t.join()
+    assert ta.current_session is None

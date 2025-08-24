@@ -2,14 +2,21 @@ import datetime
 import subprocess
 import time
 import sys
-import pickle
 from pathlib import Path
 from typing import Tuple
 from loguru import logger
 import threading
 
+from database import (
+    save_session, get_session_history,
+    set_metadata, get_metadata, get_sessions_since, get_sessions_by_weekday,
+    get_all_sessions, get_sessions_for_day, get_previous_session, get_days_tracked, configure_database,
+    create_tables_if_not_exist
+)
+
 class TimeAwareness:
-    def __init__(self, app_dir: Path,
+    def __init__(self,
+                 app_dir: Path,
                  end_session_idle_threshold: int = 10,
                  start_daemon: bool = False,
                  poll_interval: float = 5.0):
@@ -22,92 +29,49 @@ class TimeAwareness:
             start_daemon (bool): If True, start the daemon in a background thread.
             poll_interval (float): Daemon idle check interval (seconds).
         """
+        self._setup(app_dir)
+
         self.current_session = None
-        self.session_history = []
-        self.today_total = 0
         self.end_session_idle_threshold = datetime.timedelta(minutes=end_session_idle_threshold)
-        if not app_dir.exists():
-            app_dir.mkdir(parents=True)
-        self._setup_logging(app_dir)  # <-- moved logging setup here
-        self.state_path = app_dir / "state.pkl"
-        self.load_state()
+        self.today_total = float(get_metadata("today_total", 0))
         self._daemon_stop_event = threading.Event()
+
         if start_daemon:
             self.daemon_thread = threading.Thread(target=self.run_daemon, args=(poll_interval,), daemon=True)
             self.daemon_thread.start()
 
-    def _setup_logging(self, app_dir: Path):
+    def _setup(self, app_dir: Path):
         """
         Set up logging to a file in the application directory.
 
         Args:
             app_dir (Path): Directory for log file.
         """
+        if not app_dir.exists():
+            app_dir.mkdir(parents=True)
+
         log_path = app_dir / "timeawareness.log"
-        logger.remove()
         logger.add(str(log_path), rotation="10 MB", retention="10 days")
         logger.info("TimeAwareness initialized. Logging to {}", log_path)
 
-    def _serialize_session(self, session):
-        """
-        Convert a session tuple to a serializable form.
-
-        Args:
-            session (tuple): (start, end, duration) tuple.
-
-        Returns:
-            tuple: (start_iso, end_iso, duration_seconds)
-        """
-        # Convert session tuple (start, end, duration) to serializable form
-        start, end, duration = session
-        return (
-            start.isoformat() if start else None,
-            end.isoformat() if end else None,
-            duration.total_seconds() if duration else None,
-        )
-
-    def _deserialize_session(self, session):
-        """
-        Convert a serialized session tuple back to datetime objects.
-
-        Args:
-            session (tuple): (start_iso, end_iso, duration_seconds)
-
-        Returns:
-            tuple: (start_datetime, end_datetime, duration_timedelta)
-        """
-        # Convert from serializable form back to (datetime, datetime, timedelta)
-        start, end, duration = session
-        return (
-            datetime.datetime.fromisoformat(start) if start else None,
-            datetime.datetime.fromisoformat(end) if end else None,
-            datetime.timedelta(seconds=duration) if duration is not None else None,
-        )
+        db_path = app_dir / "timeawareness.sqlite"
+        configure_database(database=db_path)
+        create_tables_if_not_exist()
 
     def save_state(self):
         """
-        Persist session state to disk.
+        Persist session state to database.
         """
-        # Serialize session_history and current_session
-        state = {
-            "current_session": self.current_session.isoformat() if self.current_session else None,
-            "session_history": [self._serialize_session(s) for s in self.session_history],
-            "today_total": self.today_total,
-        }
-        with open(self.state_path, "wb") as f:
-            pickle.dump(state, f)
+        saved = set_metadata("today_total", self.today_total)
+        if not saved:
+            logger.error("Failed to save state to database.")
+            raise RuntimeError("Failed to save state.")
 
     def load_state(self):
         """
-        Load session state from disk.
+        Load session state from database.
         """
-        if self.state_path.exists():
-            with open(self.state_path, "rb") as f:
-                state = pickle.load(f)
-                cs = state.get("current_session")
-                self.current_session = datetime.datetime.fromisoformat(cs) if cs else None
-                self.session_history = [self._deserialize_session(s) for s in state.get("session_history", [])]
-                self.today_total = state.get("today_total", 0)
+        self.today_total = float(get_metadata("today_total", 0))
 
     def start_session(self):
         """
@@ -134,14 +98,17 @@ class TimeAwareness:
             raise ValueError("No session started.")
         end_time = datetime.datetime.now()
         session_duration = end_time - self.current_session
-        self.session_history.append((self.current_session, end_time, session_duration))
+        saved = save_session(self.current_session, end_time, session_duration)
+        if not saved:
+            logger.error("Failed to save session from {} to {}", self.current_session, end_time)
+            raise RuntimeError("Failed to save session.")
         logger.info("Session ended at {} (duration: {})", end_time, session_duration)
         self.current_session = None
         self.today_total += session_duration.total_seconds()
         self.save_state()
         return session_duration
 
-    def get_current_session(self) -> Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]:
+    def current_session_info(self) -> Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]:
         """
         Get information about the current session.
 
@@ -167,9 +134,10 @@ class TimeAwareness:
         Raises:
             ValueError: If no previous sessions exist.
         """
-        if not self.session_history:
+        session = get_previous_session()
+        if session is None:
             raise ValueError("No previous sessions.")
-        return self.session_history[-1]
+        return session
 
     def days_tracked(self) -> int:
         """
@@ -178,7 +146,7 @@ class TimeAwareness:
         Returns:
             int: Number of days with sessions.
         """
-        return len({start.date() for start, end, duration in self.session_history})
+        return get_days_tracked()
 
     def total_time_today(self) -> datetime.timedelta:
         """
@@ -196,8 +164,9 @@ class TimeAwareness:
         Returns:
             datetime.timedelta: Total time yesterday.
         """
-        yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
-        total = sum((duration for start, end, duration in self.session_history if start.date() == yesterday.date()), datetime.timedelta())
+        yesterday = datetime.datetime.now().date() - datetime.timedelta(days=1)
+        history = get_sessions_for_day(yesterday)
+        total = sum((duration for start, end, duration in history), datetime.timedelta())
         return total
 
     def seven_day_average(self) -> datetime.timedelta:
@@ -208,8 +177,9 @@ class TimeAwareness:
             datetime.timedelta: Seven-day average duration.
         """
         seven_days_ago = datetime.datetime.now() - datetime.timedelta(days=7)
-        total = sum((duration for start, end, duration in self.session_history if start.date() >= seven_days_ago.date()), datetime.timedelta())
-        days_count = len({start.date() for start, end, duration in self.session_history if start.date() >= seven_days_ago.date()})
+        history = get_sessions_since(seven_days_ago)
+        total = sum((duration for start, end, duration in history), datetime.timedelta())
+        days_count = len({start.date() for start, end, duration in history})
         if days_count == 0:
             return datetime.timedelta()
         return total / days_count
@@ -221,16 +191,11 @@ class TimeAwareness:
         Returns:
             datetime.timedelta: Weekday average duration.
         """
-        weekday_totals = {}
-        for start, end, duration in self.session_history:
-            weekday = start.weekday()
-            if weekday not in weekday_totals:
-                weekday_totals[weekday] = []
-            weekday_totals[weekday].append(duration)
-
+        weekday_histories = get_sessions_by_weekday()
         averages = []
-        for durations in weekday_totals.values():
-            averages.append(sum(durations, datetime.timedelta()) / len(durations))
+        for durations in weekday_histories.values():
+            if durations:
+                averages.append(sum(durations, datetime.timedelta()) / len(durations))
         if not averages:
             return datetime.timedelta()
         return sum(averages, datetime.timedelta()) / len(averages)
@@ -242,10 +207,11 @@ class TimeAwareness:
         Returns:
             datetime.timedelta: Total average duration.
         """
-        if not self.session_history:
+        history = get_all_sessions()
+        if not history:
             return datetime.timedelta()
-        total = sum((duration for start, end, duration in self.session_history), datetime.timedelta())
-        return total / len(self.session_history)
+        total = sum((duration for start, end, duration in history), datetime.timedelta())
+        return total / len(history)
 
     def history(self):
         """
@@ -254,6 +220,7 @@ class TimeAwareness:
         Returns:
             dict: Dictionary with days tracked, totals, averages, and session history.
         """
+        history = get_session_history()
         return {
             "days": self.days_tracked(),
             "total_today": self.total_time_today(),
@@ -261,7 +228,7 @@ class TimeAwareness:
             "seven_day_average": self.seven_day_average(),
             "weekday_average": self.weekday_average(),
             "total_average": self.total_average(),
-            "history": self.session_history,
+            "history": history,
         }
 
     def get_idle_time(self) -> datetime.timedelta:
@@ -298,8 +265,13 @@ class TimeAwareness:
             return datetime.timedelta(seconds=0)
 
     def quit_daemon(self):
-        """Signal the daemon thread to exit."""
+        """Signal the daemon thread to exit and end any active session."""
         self._daemon_stop_event.set()
+        if self.current_session is not None:
+            try:
+                self.end_session()
+            except Exception as e:
+                logger.error("Error ending session during quit_daemon: {}", e)
 
     def run_daemon(self, poll_interval: float = 5.0):
         """
