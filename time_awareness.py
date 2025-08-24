@@ -31,6 +31,7 @@ class TimeAwareness:
         self._setup_logging(app_dir)  # <-- moved logging setup here
         self.state_path = app_dir / "state.pkl"
         self.load_state()
+        self._daemon_stop_event = threading.Event()
         if start_daemon:
             self.daemon_thread = threading.Thread(target=self.run_daemon, args=(poll_interval,), daemon=True)
             self.daemon_thread.start()
@@ -296,6 +297,10 @@ class TimeAwareness:
             logger.error("Failed to get idle time: {}", e)
             return datetime.timedelta(seconds=0)
 
+    def quit_daemon(self):
+        """Signal the daemon thread to exit."""
+        self._daemon_stop_event.set()
+
     def run_daemon(self, poll_interval: float = 5.0):
         """
         Runs the time awareness daemon in the background.
@@ -307,7 +312,7 @@ class TimeAwareness:
         logger.info("TimeAwareness daemon started. Press Ctrl+C to quit.")
         is_active = False
         try:
-            while True:
+            while not self._daemon_stop_event.is_set():
                 idle_time = self.get_idle_time()
                 if is_active:
                     if idle_time >= self.end_session_idle_threshold:

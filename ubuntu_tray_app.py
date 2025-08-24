@@ -2,7 +2,7 @@ import gi
 gi.require_version('AppIndicator3', '0.1')
 gi.require_version('Gtk', '3.0')
 from gi.repository import AppIndicator3, Gtk, GLib
-
+from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 from loguru import logger
 
@@ -38,8 +38,8 @@ def format_date(dt):
     return dt.strftime("%m.%d.%Y")
 
 class TrayApp:
-    def __init__(self, ta: TimeAwareness):
-        self.ta = ta
+    def __init__(self):
+        self.ta = TimeAwareness(APP_DIR, start_daemon=True)
         self.indicator = AppIndicator3.Indicator.new(
             APP_ID, "", AppIndicator3.IndicatorCategory.APPLICATION_STATUS
         )
@@ -47,6 +47,7 @@ class TrayApp:
         self.menu = Gtk.Menu()
         # Store references to menu items for efficient updates
         self.menu_items = {}
+        self.icon_file = Path("/tmp/time_awareness_tray_icon.png")
         self.build_menu()
         self.indicator.set_menu(self.menu)
         self.update_icon()
@@ -171,13 +172,35 @@ class TrayApp:
         self.menu_items["prev_dur"].set_label(prev_dur_label)
         self.menu_items["prev_date"].set_label(prev_date_label)
 
+    def render_icon(self, seconds) -> Path:
+        # Format as "15 m." or "1h 15m."
+        hours, remainder = divmod(seconds, 3600)
+        minutes = remainder // 60
+        if hours > 0:
+            text = f"{hours}h {minutes}m."
+        else:
+            text = f"{minutes} m."
+        # Create image
+        img = Image.new('RGBA', (64, 64), (0,0,0,0))
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 32)
+        except IOError:
+            font = ImageFont.load_default()
+        w, h = draw.textsize(text, font=font)
+        draw.text(((64-w)/2,(64-h)/2), text, font=font, fill=(255,255,255,255))
+
+        img.save(self.icon_file.as_posix())
+        return self.icon_file
+
     def update_icon(self):
         try:
             _, _, duration = self.ta.get_current_session()
-            text = format_duration(duration)
+            seconds = int(duration.total_seconds())
         except Exception:
-            text = "--"
-        self.indicator.set_label(text, "")
+            seconds = 0
+        icon_path = self.render_icon(seconds)
+        self.indicator.set_icon(icon_path)
 
     def refresh(self):
         self.update_icon()
@@ -219,11 +242,13 @@ class TrayApp:
 
     def on_quit(self, widget):
         logger.info("Tray app quitting via menu.")
+        self.ta.quit_daemon()  # Stop the daemon thread if running
         Gtk.main_quit()
+        if self.icon_file.exists():
+            self.icon_file.unlink()
 
 def main():
-    ta = TimeAwareness(APP_DIR, start_daemon=True)
-    TrayApp(ta)
+    TrayApp()
     Gtk.main()
 
 if __name__ == "__main__":

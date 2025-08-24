@@ -1,4 +1,5 @@
 pytest
 pygobject
+pillow
 loguru
 typer
