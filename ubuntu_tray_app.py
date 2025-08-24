@@ -1,3 +1,5 @@
+import datetime
+
 import gi
 gi.require_version('AppIndicator3', '0.1')
 gi.require_version('Gtk', '3.0')
@@ -16,23 +18,23 @@ logger.remove()
 logger.add(str(APP_DIR / "app.log"), rotation="10 MB", retention="10 days")
 logger.info("Ubuntu tray app started. Logging to {}", APP_DIR / "app.log")
 
-def format_duration(td):
+def format_duration(td: datetime.timedelta) -> str:
     if td is None:
         return "-"
     total_seconds = int(td.total_seconds())
     hours, remainder = divmod(total_seconds, 3600)
     minutes = (remainder // 60)
     if hours > 0:
-        return f"{hours}h {minutes}m"
+        return f"{hours}h {minutes}m."
     else:
-        return f"{minutes}m"
+        return f"{minutes}m."
 
-def format_time(dt):
+def format_time(dt: datetime.datetime) -> str:
     if dt is None:
         return "-"
     return dt.strftime("%H:%M")
 
-def format_date(dt):
+def format_date(dt: datetime.datetime) -> str:
     if dt is None:
         return "-"
     return dt.strftime("%m.%d.%Y")
@@ -172,14 +174,9 @@ class TrayApp:
         self.menu_items["prev_dur"].set_label(prev_dur_label)
         self.menu_items["prev_date"].set_label(prev_date_label)
 
-    def render_icon(self, seconds) -> Path:
+    def render_icon(self, td: datetime.timedelta) -> Path:
         # Format as "15 m." or "1h 15m."
-        hours, remainder = divmod(seconds, 3600)
-        minutes = remainder // 60
-        if hours > 0:
-            text = f"{hours}h {minutes}m."
-        else:
-            text = f"{minutes} m."
+        text = format_duration(td)
         # Create image
         img = Image.new('RGBA', (64, 64), (0,0,0,0))
         draw = ImageDraw.Draw(img)
@@ -196,10 +193,9 @@ class TrayApp:
     def update_icon(self):
         try:
             _, _, duration = self.ta.get_current_session()
-            seconds = int(duration.total_seconds())
         except Exception:
-            seconds = 0
-        icon_path = self.render_icon(seconds)
+            duration = datetime.timedelta(seconds=0)
+        icon_path = self.render_icon(duration)
         self.indicator.set_icon(icon_path)
 
     def refresh(self):
