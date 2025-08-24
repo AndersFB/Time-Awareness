@@ -2,9 +2,9 @@ import gi
 gi.require_version('AppIndicator3', '0.1')
 gi.require_version('Gtk', '3.0')
 from gi.repository import AppIndicator3, Gtk, GLib
-from pathlib import Path
 
-from loguru import logger  # <-- add import
+from pathlib import Path
+from loguru import logger
 
 from time_awareness import TimeAwareness
 

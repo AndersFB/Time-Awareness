@@ -2,7 +2,6 @@ import pytest
 import datetime
 from time_awareness import TimeAwareness
 
-
 class DummyDateTime(datetime.datetime):
     """A dummy datetime class for monkeypatching now()."""
     @classmethod

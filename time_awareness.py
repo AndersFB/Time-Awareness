@@ -8,7 +8,6 @@ from typing import Tuple
 from loguru import logger
 import threading
 
-
 class TimeAwareness:
     def __init__(self, app_dir: Path,
                  end_session_idle_threshold: int = 10,
