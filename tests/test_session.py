@@ -38,8 +38,7 @@ def test_days_tracked_and_history(ta):
     assert "history" in history
 
 def test_previous_session_no_sessions(ta):
-    with pytest.raises(ValueError):
-        ta.previous_session()
+    assert ta.previous_session() is None
 
 def test_total_time_yesterday_empty(ta):
     assert ta.total_time_yesterday() == datetime.timedelta()
@@ -62,5 +61,4 @@ def test_current_session_info(ta):
     ta.end_session()
 
 def test_end_session_without_start(ta):
-    with pytest.raises(ValueError):
-        ta.end_session()
+    assert ta.end_session() is None

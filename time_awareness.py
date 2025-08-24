@@ -3,7 +3,7 @@ import subprocess
 import time
 import sys
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Optional
 from loguru import logger
 import threading
 
@@ -67,7 +67,6 @@ class TimeAwareness:
         saved = set_metadata("today_total", self.today_total)
         if not saved:
             logger.error("Failed to save state to database.")
-            raise RuntimeError("Failed to save state.")
 
     def load_state(self):
         """
@@ -85,7 +84,7 @@ class TimeAwareness:
         logger.info("Session started at {}", self.current_session)
         self.save_state()
 
-    def end_session(self) -> datetime.timedelta:
+    def end_session(self) -> Optional[datetime.timedelta]:
         """
         End the current session and record its duration.
 
@@ -97,20 +96,20 @@ class TimeAwareness:
         """
         if self.current_session is None:
             logger.warning("Attempted to end session, but no session was started.")
-            raise ValueError("No session started.")
+            return None
         end_time = datetime.datetime.now()
         session_duration = end_time - self.current_session
         saved = save_session(self.current_session, end_time, session_duration)
         if not saved:
             logger.error("Failed to save session from {} to {}", self.current_session, end_time)
-            raise RuntimeError("Failed to save session.")
+            return None
         logger.info("Session ended at {} (duration: {})", end_time, session_duration)
         self.current_session = None
         self.today_total += session_duration.total_seconds()
         self.save_state()
         return session_duration
 
-    def current_session_info(self) -> Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]:
+    def current_session_info(self) -> Optional[Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]:
         """
         Get information about the current session.
 
@@ -121,12 +120,13 @@ class TimeAwareness:
             ValueError: If no session is currently started.
         """
         if self.current_session is None:
-            raise ValueError("No session started.")
+            logger.warning("No session started.")
+            return None
         now = datetime.datetime.now()
         duration = now - self.current_session
         return self.current_session, now, duration
 
-    def previous_session(self) -> Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]:
+    def previous_session(self) -> Optional[Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]:
         """
         Get the previous session's information.
 
@@ -138,7 +138,7 @@ class TimeAwareness:
         """
         session = get_previous_session()
         if session is None:
-            raise ValueError("No previous sessions.")
+            logger.warning("No previous sessions.")
         return session
 
     def days_tracked(self) -> int:
@@ -270,10 +270,7 @@ class TimeAwareness:
         """Signal the daemon thread to exit and end any active session."""
         self._daemon_stop_event.set()
         if self.current_session is not None:
-            try:
-                self.end_session()
-            except Exception as e:
-                logger.error("Error ending session during quit_daemon: {}", e)
+            self.end_session()
 
     def run_daemon(self, poll_interval: float = 5.0):
         """
