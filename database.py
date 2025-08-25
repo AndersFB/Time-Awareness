@@ -61,8 +61,17 @@ def create_tables_if_not_exist():
     """
     Create Session and MetaData tables if they do not exist.
     """
-    database_proxy.create_tables([Session, MetaData], safe=True)
-    logger.info("Tables created successfully")
+    tables_to_create = []
+    db = database_proxy.obj
+    if not db.table_exists('session'):
+        tables_to_create.append(Session)
+    if not db.table_exists('metadata'):
+        tables_to_create.append(MetaData)
+    if tables_to_create:
+        db.create_tables(tables_to_create, safe=True)
+        logger.info("Tables created: {}", [t._meta.table_name for t in tables_to_create])
+    else:
+        logger.info("All tables already exist")
 
 @with_database
 def save_session(start, end, duration) -> bool:

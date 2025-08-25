@@ -9,7 +9,8 @@ ta = None
 def get_ta():
     global ta
     if ta is None:
-        ta = TimeAwareness(app_dir=Path.home() / ".time_awareness")
+        app_dir = Path.home() / ".time_awareness"
+        ta = TimeAwareness(app_dir)
         ta.load_state()
     return ta
 
@@ -31,8 +32,9 @@ def stop():
         typer.echo(f"Error: {e}")
 
 @app.command()
-def daemon(poll_interval: float = 5.0):
+def daemon(poll_interval: float = 5.0, end_session_idle_threshold: int = 10):
     """Run the time awareness daemon."""
+    get_ta().set_end_session_idle_threshold(end_session_idle_threshold)
     get_ta().run_daemon(poll_interval=poll_interval)
     get_ta().save_state()
 
@@ -54,7 +56,11 @@ def history():
 def current():
     """Show current session info."""
     try:
-        start, now, duration = get_ta().current_session_info()
+        session_info = get_ta().current_session_info()
+        if session_info is None:
+            typer.echo("No active session.")
+            return
+        start, now, duration = session_info
         typer.echo(f"Session started: {start}")
         typer.echo(f"Now: {now}")
         typer.echo(f"Duration: {duration}")
@@ -67,8 +73,13 @@ def live(interval: float = 1.0):
     try:
         while True:
             try:
-                start, now, duration = get_ta().current_session_info()
-                typer.echo(f"\rSession started: {start} | Now: {now} | Duration: {duration}", nl=False)
+                get_ta().load_state()  # Reload state to reflect daemon changes
+                session_info = get_ta().current_session_info()
+                if session_info is None:
+                    typer.echo("\rNo active session. Taking a break ...                                                                     ", nl=False)
+                else:
+                    start, now, duration = session_info
+                    typer.echo(f"\rSession started: {start} | Now: {now} | Duration: {duration}", nl=False)
             except Exception as e:
                 typer.echo(f"\rError: {e}                          ", nl=False)
             time.sleep(interval)

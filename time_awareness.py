@@ -18,35 +18,39 @@ from database import (
 class TimeAwareness:
     def __init__(self,
                  app_dir: Path,
-                 end_session_idle_threshold: int = 10,
                  start_daemon: bool = False,
-                 poll_interval: float = 5.0):
+                 log_to_terminal: bool = False):
         """
         Initialize the TimeAwareness instance and optionally start the background daemon.
 
         Args:
             app_dir (Path): Directory for storing state and logs.
-            end_session_idle_threshold (int): Idle threshold in minutes to end session.
             start_daemon (bool): If True, start the daemon in a background thread.
             poll_interval (float): Daemon idle check interval in seconds.
+            log_to_terminal (bool): If True, also log to terminal.
         """
-        self._setup(app_dir)
-
-        self.current_session = None
-        self.end_session_idle_threshold = datetime.timedelta(minutes=end_session_idle_threshold)
-        self.today_total = float(get_metadata("today_total", 0))
+        self._setup(app_dir, log_to_terminal)
         self._daemon_stop_event = threading.Event()
 
+        self.current_session = None
+        self.today_total = None
+        self.end_session_idle_threshold = None
+
+        self.load_state()
+        self.set_end_session_idle_threshold()
+
         if start_daemon:
+            poll_interval = 5.0
             self.daemon_thread = threading.Thread(target=self.run_daemon, args=(poll_interval,), daemon=True)
             self.daemon_thread.start()
 
-    def _setup(self, app_dir: Path):
+    def _setup(self, app_dir: Path, log_to_terminal: bool):
         """
         Set up logging and database in the specified application directory.
 
         Args:
             app_dir (Path): Directory for log file and database.
+            log_to_terminal (bool): If True, also log to terminal.
         """
         # Silence peewee logging
         logging.getLogger("peewee").setLevel(logging.CRITICAL)
@@ -56,6 +60,8 @@ class TimeAwareness:
 
         log_path = app_dir / "timeawareness.log"
         logger.add(str(log_path), rotation="10 MB", retention="10 days")
+        if not log_to_terminal:
+            logger.remove(0)
         logger.info("Log file created at {}", log_path)
 
         db_path = app_dir / "timeawareness.sqlite"
@@ -64,19 +70,42 @@ class TimeAwareness:
         create_tables_if_not_exist()
         logger.info("Database configured and tables checked/created.")
 
+    def set_end_session_idle_threshold(self, minutes: int = 10):
+        """
+        Set the idle threshold in minutes to end the current session.
+
+        Args:
+            minutes (int): Idle time in minutes to end session.
+        """
+        self.end_session_idle_threshold = datetime.timedelta(minutes=minutes)
+        logger.info("End session idle threshold set to {} minutes", minutes)
+
     def save_state(self):
         """
-        Save the current session state (today's total time) to the database.
+        Save the current session state (today's total time and current session) to the database.
         """
-        saved = set_metadata("today_total", self.today_total)
-        if not saved:
+        saved_today = set_metadata("today_total", self.today_total)
+        if self.current_session is not None:
+            set_metadata("current_session", self.current_session.isoformat())
+        else:
+            set_metadata("current_session", "")
+        if not saved_today:
             logger.error("Failed to save state to database.")
 
     def load_state(self):
         """
-        Load the session state (today's total time) from the database.
+        Load the session state (today's total time and current session) from the database.
         """
         self.today_total = float(get_metadata("today_total", 0))
+        session_str = get_metadata("current_session", "")
+        if session_str:
+            try:
+                self.current_session = datetime.datetime.fromisoformat(session_str)
+            except Exception as e:
+                logger.error("Failed to parse current_session from metadata: {}", e)
+                self.current_session = None
+        else:
+            self.current_session = None
 
     def start_session(self):
         """

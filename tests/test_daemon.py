@@ -11,7 +11,7 @@ def use_in_memory_db(use_in_memory_db):
 
 @pytest.fixture
 def ta(tmp_path):
-    return TimeAwareness(app_dir=tmp_path)
+    return TimeAwareness(app_dir=tmp_path, log_to_terminal=True)
 
 def test_run_daemon_starts_and_ends_session(monkeypatch, ta):
     # Simulate idle time: first active, then idle
