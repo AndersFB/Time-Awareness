@@ -2,7 +2,7 @@ import pytest
 import datetime
 
 from database import (
-    save_session, get_session_history, set_metadata, get_metadata,
+    save_session, get_sessions, set_metadata, get_metadata,
     get_sessions_since, get_sessions_by_weekday, get_all_sessions, get_sessions_for_day,
     get_previous_session, get_days_tracked
 )
@@ -16,11 +16,11 @@ def test_save_and_get_session():
     end = datetime.datetime(2024, 6, 1, 11, 0, 0)
     duration = end - start
     save_session(start, end, duration)
-    history = get_session_history()
-    assert len(history) == 1
-    assert history[0][0] == start
-    assert history[0][1] == end
-    assert history[0][2] == duration
+    sessions = get_sessions()
+    assert len(sessions) == 1
+    assert sessions[0][0] == start
+    assert sessions[0][1] == end
+    assert sessions[0][2] == duration
 
 def test_metadata():
     set_metadata("foo", "bar")

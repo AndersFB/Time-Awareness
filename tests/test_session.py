@@ -35,7 +35,7 @@ def test_days_tracked_and_history(ta):
     history = ta.history()
     assert "days" in history
     assert "total_today" in history
-    assert "history" in history
+    assert "sessions" in history
 
 def test_previous_session_no_sessions(ta):
     assert ta.previous_session() is None

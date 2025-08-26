@@ -1,7 +1,8 @@
 import gi
-gi.require_version('AppIndicator3', '0.1')
+gi.require_version('AyatanaAppIndicator3', '0.1')
+from gi.repository import AyatanaAppIndicator3 as AppIndicator3
 gi.require_version('Gtk', '3.0')
-from gi.repository import AppIndicator3, Gtk, GLib
+from gi.repository import Gtk, GLib
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 from loguru import logger
@@ -34,23 +35,28 @@ def format_date(dt: datetime.datetime) -> str:
     return dt.strftime("%m.%d.%Y")
 
 class TrayApp:
-    def __init__(self):
+    def __init__(self, update_app_interval: int = 10):
         """
         Initialize the tray application, indicator, and menu.
         """
-        self.ta = TimeAwareness(APP_DIR, start_daemon=True)
+        self.tmp_icon_dir = Path("/tmp/time_awareness/")
+        if not self.tmp_icon_dir.exists():
+            self.tmp_icon_dir.mkdir(parents=True)
+
+        self.ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
+
         self.indicator = AppIndicator3.Indicator.new(
             APP_ID, "", AppIndicator3.IndicatorCategory.APPLICATION_STATUS
         )
         self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         self.menu = Gtk.Menu()
-        # Store references to menu items for efficient updates
         self.menu_items = {}
-        self.icon_file = Path("/tmp/time_awareness_tray_icon.png")
         self.build_menu()
         self.indicator.set_menu(self.menu)
+
         self.update_icon()
-        GLib.timeout_add_seconds(10, self.refresh)  # update every 10s
+
+        GLib.timeout_add_seconds(update_app_interval, self.refresh)  # update every refresh_icon second
         logger.info("TrayApp initialized.")
 
     def build_menu(self):
@@ -67,16 +73,24 @@ class TrayApp:
         item_current.set_sensitive(False)
         self.menu.append(item_current)
 
-        try:
-            start, now, duration = self.ta.current_session_info()
-            started_label = f"Started at {format_time(start)}"
-        except Exception:
-            started_label = "Not running"
+        session_info = self.ta.current_session_info()
+        if session_info is not None:
+            start, now, duration = session_info
+            started_dur_label = format_duration(duration)
+            started_date_label = f"Started at {format_time(start)}"
+        else:
+            started_dur_label = "-"
+            started_date_label = "Not running"
 
-        item_started = Gtk.MenuItem(label=started_label)
+        item_started_dur = Gtk.MenuItem(label=started_dur_label)
+        item_started_dur.set_sensitive(False)
+        self.menu.append(item_started_dur)
+        self.menu_items["current_session_dur"] = item_started_dur
+
+        item_started = Gtk.MenuItem(label=started_date_label)
         item_started.set_sensitive(False)
         self.menu.append(item_started)
-        self.menu_items["current_session"] = item_started
+        self.menu_items["current_session_date"] = item_started
 
         # Separator
         self.menu.append(Gtk.SeparatorMenuItem())
@@ -106,11 +120,12 @@ class TrayApp:
         item_prev.set_sensitive(False)
         self.menu.append(item_prev)
 
-        try:
-            prev_start, prev_end, prev_duration = self.ta.previous_session()
+        previous_session_info = self.ta.previous_session()
+        if previous_session_info is not None:
+            prev_start, prev_end, prev_duration = previous_session_info
             prev_dur_label = format_duration(prev_duration)
             prev_date_label = f"{format_date(prev_start)} {format_time(prev_start)}–{format_time(prev_end)}"
-        except Exception:
+        else:
             prev_dur_label = "-"
             prev_date_label = "-"
 
@@ -156,22 +171,26 @@ class TrayApp:
         """
         Update dynamic menu items with current session and history data.
         """
-        # Update only relevant menu items
-        try:
-            start, now, duration = self.ta.current_session_info()
-            started_label = f"Started at {format_time(start)}"
-        except Exception:
-            started_label = "Not running"
-        self.menu_items["current_session"].set_label(started_label)
+        session_info = self.ta.current_session_info()
+        if session_info is not None:
+            start, now, duration = session_info
+            started_dur_label = format_duration(duration)
+            started_date_label = f"Started at {format_time(start)}"
+        else:
+            started_dur_label = "-"
+            started_date_label = "Not running"
+        self.menu_items["current_session_dur"].set_label(started_dur_label)
+        self.menu_items["current_session_date"].set_label(started_date_label)
 
         total_today_label = format_duration(self.ta.total_time_today())
         self.menu_items["total_today"].set_label(total_today_label)
 
-        try:
-            prev_start, prev_end, prev_duration = self.ta.previous_session()
+        previous_session_info = self.ta.previous_session(verbose=False)
+        if previous_session_info is not None:
+            prev_start, prev_end, prev_duration = previous_session_info
             prev_dur_label = format_duration(prev_duration)
             prev_date_label = f"{format_date(prev_start)} {format_time(prev_start)}–{format_time(prev_end)}"
-        except Exception:
+        else:
             prev_dur_label = "-"
             prev_date_label = "-"
         self.menu_items["prev_dur"].set_label(prev_dur_label)
@@ -179,7 +198,7 @@ class TrayApp:
 
     def render_icon(self, td: datetime.timedelta) -> Path:
         """
-        Render a tray icon showing the current session duration.
+        Render a tray icon as a circular progress indicator for time spent.
 
         Args:
             td (timedelta): Duration to display.
@@ -187,31 +206,73 @@ class TrayApp:
         Returns:
             Path: Path to the generated icon image.
         """
-        # Format as "15 m." or "1h 15m."
-        text = format_duration(td)
-        # Create image
-        img = Image.new('RGBA', (64, 64), (0,0,0,0))
-        draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 32)
-        except IOError:
-            font = ImageFont.load_default()
-        w, h = draw.textsize(text, font=font)
-        draw.text(((64-w)/2,(64-h)/2), text, font=font, fill=(255,255,255,255))
+        # Total seconds spent
+        total_minutes = td.total_seconds() / 60
 
-        img.save(self.icon_file.as_posix())
-        return self.icon_file
+        text_filename = f"{int(total_minutes)}m"
+        icon_file = self.tmp_icon_dir / f"tray_icon_{text_filename}.png"
+
+        if icon_file.exists():
+            return icon_file
+
+        # Determine fill percentage (1 hour = full circle)
+        fill_fraction = min(total_minutes / 60.0, 1.0)  # Max 1.0 (100%)
+
+        # Determine color based on time
+        if total_minutes < 60:
+            fill_color = (0, 122, 255, 255)  # Blue
+        elif total_minutes < 120:
+            fill_color = (128, 0, 128, 255)  # Purple
+        else:
+            fill_color = (255, 0, 0, 255)  # Red
+
+        # Icon size
+        size = 128
+        img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Circle bounds
+        padding = 8
+        bbox = [padding, padding, size - padding, size - padding]
+
+        # Draw outer white circle (thicker than border)
+        outer_padding = padding - 4  # slightly outside
+        outer_bbox = [outer_padding, outer_padding, size - outer_padding, size - outer_padding]
+        draw.ellipse(outer_bbox, outline=(255, 255, 255, 255), width=6)
+
+        # Draw main grey border
+        draw.ellipse(bbox, outline=(200, 200, 200, 255), width=8)
+
+        # Draw the filled arc (progress)
+        if fill_fraction > 0:
+            # Start angle at -90 (12 o'clock), sweep clockwise
+            end_angle = -90 + (360 * fill_fraction)
+            draw.pieslice(bbox, start=-90, end=end_angle, fill=fill_color)
+
+        # Save icon
+        logger.debug(f"Rendering icon image for {format_duration(td)} (time delta: {td}): {icon_file}")
+        img.save(icon_file.as_posix())
+        return icon_file
 
     def update_icon(self):
         """
         Update the tray icon to reflect the current session duration.
         """
-        try:
-            _, _, duration = self.ta.current_session_info()
-        except Exception:
+        session_info = self.ta.current_session_info()
+        if session_info is not None:
+            _, _, duration = session_info
+        else:
             duration = datetime.timedelta(seconds=0)
-        icon_path = self.render_icon(duration)
-        self.indicator.set_icon(icon_path)
+
+        total_minutes = duration.total_seconds() / 60
+        if total_minutes > 180:
+            # The icon will not change after 180 minutes
+            return
+
+        current_icon_file = self.render_icon(duration)
+
+        # Set the new icon
+        self.indicator.set_icon_full(current_icon_file.as_posix(), "App Icon")
 
     def refresh(self):
         """
@@ -247,8 +308,8 @@ class TrayApp:
         """
         Show a dialog with session history and statistics.
         """
-        hist = self.ta.history()
-        logger.info("History dialog opened. Sessions: {}", len(hist['history']))
+        hist = self.ta.history(count_sessions=True)
+        logger.info("History dialog opened. Sessions: {}", hist['sessions'])
         # Show a simple dialog with history summary
         msg = (
             f"Days tracked: {hist['days']}\n"
@@ -257,31 +318,47 @@ class TrayApp:
             f"7-day avg: {format_duration(hist['seven_day_average'])}\n"
             f"Weekday avg: {format_duration(hist['weekday_average'])}\n"
             f"Total avg: {format_duration(hist['total_average'])}\n"
-            f"Sessions: {len(hist['history'])}"
+            f"Sessions: {hist['sessions']}"
         )
         dialog = Gtk.MessageDialog(
-            None, 0, Gtk.MessageType.INFO, Gtk.ButtonsType.OK, "Session History"
+            transient_for=None,
+            modal=True,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="Session History"
         )
         dialog.format_secondary_text(msg)
         dialog.run()
         dialog.destroy()
+
+    def quit(self):
+        self.ta.quit_daemon()  # Stop the daemon thread if running
+        logger.info("Cleaning up icons in {}", self.tmp_icon_dir)
+        for icon_file in self.tmp_icon_dir.glob("tray_icon_*.png"):
+            icon_file.unlink(missing_ok=True)
 
     def on_quit(self, widget):
         """
         Quit the tray application and clean up resources.
         """
         logger.info("Tray app quitting via menu.")
-        self.ta.quit_daemon()  # Stop the daemon thread if running
+        self.quit()
         Gtk.main_quit()
-        if self.icon_file.exists():
-            self.icon_file.unlink()
 
 def main():
     """
     Entry point for the tray application.
     """
-    TrayApp()
-    Gtk.main()
+    app = None
+    try:
+        app = TrayApp()
+        Gtk.main()
+    except KeyboardInterrupt:
+        print("KeyboardInterrupt detected, quitting...")
+        if app:
+            app.quit()
+    except Exception as e:
+        print(f"Unexpected exception: {e}")
 
 if __name__ == "__main__":
     main()

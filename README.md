@@ -1,125 +1,176 @@
 # Time Awareness
 
-> **Inspired by the MacOS app [Pandan](https://sindresorhus.com/pandan) by Sindre Sorhus.**
+> **Inspired by the macOS app [Pandan](https://sindresorhus.com/pandan) by Sindre Sorhus.**
 
-Time Awareness is a simple productivity tool that tracks your computer usage sessions, providing daily summaries and statistics. It features a tray icon for Ubuntu (and other Linux desktops) that allows you to quickly view your current session, total time today, previous sessions, and more.
+Time Awareness is a productivity tool that tracks your computer usage sessions, providing daily summaries and statistics. It features a tray icon for Ubuntu (and other Linux desktops) that allows you to quickly view your current session, total time today, previous sessions, and more.
+
+---
 
 ## Features
 
 - Tracks active computer usage sessions automatically.
 - Ends sessions after a configurable idle threshold.
 - Tray applet for Ubuntu with session info and quick actions.
+- **Dynamic tray icon that visually shows time spent as a circle progress indicator:**
+  - 0 min → empty circle.
+  - 15 min → 25% filled.
+  - 1 hour → full circle.
+  - Colors change with time:
+    - 0–59 min: blue.
+    - 60–119 min: purple.
+    - 120+ min: red.
 - Session history and statistics (daily totals, averages, etc.).
 - Persistent state and logging.
+- Graceful cleanup on `Ctrl+C`.
+
+---
 
 ## Requirements
 
-- Python 3.7+
-- Ubuntu (or other Linux with AppIndicator3 support)
-- The following Python packages:
-  - `PyGObject` (`gi`)
+- **Python 3.7+**
+- **Ubuntu (or Linux with AyatanaAppIndicator3 support)**
+- **Python dependencies:** (installed via `requirements.txt`)
+  - `pytest`
+  - `pygobject`
+  - `pydbus`
+  - `pillow`
   - `loguru`
-- For idle detection:
-  - On Linux: `xprintidle` (install via your package manager)
-  - On macOS: `ioreg` (pre-installed)
+  - `peewee`
+  - `typer`
 
-## Installation
+- **System packages (Ubuntu):**
+  ```bash
+  sudo apt-get update
+  sudo apt-get install \
+      python3-gi \
+      gir1.2-ayatanaappindicator3-0.1 \
+      libayatana-appindicator3-dev \
+      dbus \
+      libdbus-glib-1-dev
+  ```
+  - `python3-gi` and `gir1.2-ayatanaappindicator3-0.1` → required for the tray app.
+  - `libayatana-appindicator3-dev` → ensures AppIndicator works properly.
+  - `dbus` and `libdbus-glib-1-dev` → needed for idle detection via D-Bus.
 
-### 1. Clone the repository
+---
+
+### Idle Detection
+The application uses **GNOME's IdleMonitor** via **D-Bus** to detect inactivity.
+
+---
+
+## Quick Installation (Recommended)
+
+Run this command to automatically install all dependencies, clone the project into `~/.time_awareness`, create a virtual environment, install Python packages, and set up autostart:
 
 ```bash
-git clone https://github.com/yourusername/time_awareness.git
+curl -sSL https://raw.githubusercontent.com/AndersFB/Time-Awareness/main/install.sh | bash
+```
+
+This will:
+- Install required system packages.
+- Clone the repository to `~/.time_awareness`.
+- Create a Python virtual environment (`.venv`).
+- Install Python dependencies from `requirements.txt`.
+- Create an autostart entry so the tray app launches on login.
+
+After installation, you can start the app immediately with:
+
+```bash
+~/.time_awareness/.venv/bin/python ~/.time_awareness/app.py
+```
+
+---
+
+## Manual Installation
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/AndersFB/Time-Awareness.git time_awareness
 cd time_awareness
 ```
 
 ### 2. Set up a Python virtual environment
-
-It is recommended to use a virtual environment to manage dependencies:
-
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
 ### 3. Install Python dependencies
-
 ```bash
 pip install -r requirements.txt
 ```
 
-#### On Ubuntu, you may also need system packages:
-
-```bash
-sudo apt-get install python3-gi gir1.2-appindicator3-0.1 xprintidle
-```
-
-- `python3-gi` and `gir1.2-appindicator3-0.1` are required for the tray app.
-- `xprintidle` is required for idle time detection.
+---
 
 ## Running the Tray App on Ubuntu
 
 To start the tray app:
-
 ```bash
 source venv/bin/activate
-python ubuntu_tray_app.py
+python app.py
 ```
 
-You should see a tray icon appear, showing your current session duration. Right-click or left-click the icon to access the menu, where you can view session stats, start/end sessions, and quit the app.
+You should see a **circle-based progress icon** in your system tray.  
+- Right-click the icon to open the menu with:
+  - Current session info
+  - Total time today
+  - Previous session details
+  - Options to start/stop sessions
+  - **Quit** (cleans up temporary icons and stops the background daemon)
+
+**KeyboardInterrupt (`Ctrl+C`) is handled gracefully**: the app calls its `on_quit()` method to clean up before exiting.
+
+---
 
 ## Setting Up Autostart on Ubuntu
 
-To make Time Awareness start automatically when you log in:
+If you did not use the automatic installer, you can set up autostart manually:
 
-1. **Find the full path to your Python and the app script**  
-   Activate your virtual environment and run:
+1. **Find paths to Python and the app script**
    ```bash
    which python
    pwd
    ```
-   Note the output (e.g., `/home/youruser/PycharmProjects/time_awareness/venv/bin/python` and `/home/youruser/PycharmProjects/time_awareness`).
-
-2. **Create an autostart entry**  
-   Create a file named `time_awareness.desktop` in `~/.config/autostart/` with the following content (replace the paths as needed):
-
+2. **Create `~/.config/autostart/time_awareness.desktop`**:
    ```
    [Desktop Entry]
    Type=Application
-   Exec=/home/youruser/PycharmProjects/time_awareness/venv/bin/python /home/youruser/PycharmProjects/time_awareness/ubuntu_tray_app.py
+   Exec=/full/path/to/python /full/path/to/app.py
    Hidden=false
    NoDisplay=false
    X-GNOME-Autostart-enabled=true
    Name=Time Awareness
    Comment=Track your computer usage sessions
    ```
-
-3. **Make sure the file is executable**  
+3. Make it executable:
    ```bash
    chmod +x ~/.config/autostart/time_awareness.desktop
    ```
 
-The app will now start automatically each time you log in to your Ubuntu desktop.
+---
 
 ## Usage
 
-- **Current session**: Shows when your current tracked session started.
-- **Total today**: Shows how much time you've spent today.
-- **Previous session**: Shows details of your last session.
+- **Current session**: When it started and its duration.
+- **Total today**: How much time you've spent today.
+- **Previous session**: Details of your last session.
 - **Disable**: Ends the current session.
 - **New session**: Starts a new session.
-- **History**: Shows a summary of your tracked sessions and statistics.
-- **Quit**: Exits the tray app.
+- **History**: Shows summary statistics.
+- **Quit**: Cleans up and exits the tray app.
+
+---
 
 ## Troubleshooting
 
-- If the tray icon does not appear, ensure you have all required system packages installed.
-- If you see errors about missing `gi` or `AppIndicator3`, check that `python3-gi` and `gir1.2-appindicator3-0.1` are installed.
-- For idle detection to work, `xprintidle` must be installed and available in your PATH.
+- If the tray icon does not appear:
+  - Ensure `python3-gi` and `gir1.2-ayatanaappindicator3-0.1` are installed.
+- If idle detection does not work:
+  - Ensure `dbus` is installed.
+- Logs are stored in `~/.time_awareness/timeawareness.log`.
 
-## Logging
-
-Logs are written to `~/.time_awareness/app.log` and `~/.time_awareness/timeawareness.log`.
+---
 
 ## License
-
-MIT License. See [LICENSE](LICENSE) for details.
+MIT License.

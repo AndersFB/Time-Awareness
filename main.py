@@ -34,7 +34,7 @@ def stop():
 @app.command()
 def daemon(poll_interval: float = 5.0, end_session_idle_threshold: int = 10):
     """Run the time awareness daemon."""
-    get_ta().set_end_session_idle_threshold(end_session_idle_threshold)
+    get_ta().end_session_idle_threshold = end_session_idle_threshold
     get_ta().run_daemon(poll_interval=poll_interval)
     get_ta().save_state()
 

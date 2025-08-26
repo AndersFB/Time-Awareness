@@ -1,6 +1,8 @@
 import datetime
 from functools import wraps
 from pathlib import Path
+from typing import Any, List, Tuple, Union
+
 from loguru import logger
 from peewee import SqliteDatabase, Model, DateTimeField, FloatField, TextField, DatabaseProxy
 
@@ -74,7 +76,7 @@ def create_tables_if_not_exist():
         logger.info("All tables already exist")
 
 @with_database
-def save_session(start, end, duration) -> bool:
+def save_session(start: datetime.datetime, end: datetime.datetime, duration: datetime.timedelta) -> bool:
     """
     Save a session record to the database.
 
@@ -95,13 +97,20 @@ def save_session(start, end, duration) -> bool:
         return False
 
 @with_database
-def get_session_history():
+def get_sessions(return_count: bool = False) -> Union[int, List[Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]]:
     """
     Retrieve all session records from the database.
 
+    Args:
+        return_count (bool): If True, return the number of sessions instead of the session list.
+
     Returns:
-        list: List of tuples (start, end, duration).
+        int: Number of sessions if return_count is True.
+        list: List of tuples (start, end, duration) if return_count is False.
     """
+    if return_count:
+        return Session.select().count()
+
     try:
         history = [
             (s.start, s.end, datetime.timedelta(seconds=s.duration))
@@ -114,7 +123,7 @@ def get_session_history():
         return []
 
 @with_database
-def set_metadata(key, value) -> bool:
+def set_metadata(key: str, value: Any) -> bool:
     """
     Set a metadata key-value pair.
 
@@ -134,7 +143,7 @@ def set_metadata(key, value) -> bool:
         return False
 
 @with_database
-def get_metadata(key: str, default=None):
+def get_metadata(key: str, default: Any = None):
     """
     Get a metadata value by key.
 
@@ -245,12 +254,15 @@ def get_sessions_for_day(day: datetime.date):
         return []
 
 @with_database
-def get_previous_session():
+def get_previous_session(verbose: bool = True):
     """
-    Get the most recent session.
+    Retrieve the most recent session from the database.
+
+    Args:
+        verbose (bool): If True, logs details about the fetched session.
 
     Returns:
-        tuple or None: (start, end, duration) of previous session, or None if none exist.
+        tuple: (start, end, duration) of the previous session, or None if no sessions exist.
     """
     try:
         session = Session.select().order_by(Session.start.desc()).first()
@@ -260,7 +272,8 @@ def get_previous_session():
                 session.end,
                 datetime.timedelta(seconds=session.duration)
             )
-            logger.debug("Fetched previous session: {} - {}", session.start, session.end)
+            if verbose:
+                logger.debug("Fetched previous session: {} - {}", session.start, session.end)
             return result
         else:
             logger.debug("No previous session found")
