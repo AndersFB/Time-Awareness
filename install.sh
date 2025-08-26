@@ -9,20 +9,15 @@ if command -v apt-get >/dev/null 2>&1; then
         python3-gi \
         gir1.2-ayatanaappindicator3-0.1 \
         libayatana-appindicator3-dev \
-        dbus \
-        libdbus-glib-1-dev \
-        fonts-dejavu-core \
-        git \
-        python3-venv
+        dbus libdbus-glib-1-dev \
+        libgirepository1.0-dev gir1.2-glib-2.0 \
+        gobject-introspection
 elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
     echo "[INFO] Detected RHEL/CentOS/Fedora system."
     sudo yum install -y \
-        python3 \
         python3-gobject \
         dbus \
         dbus-glib-devel \
-        git \
-        dejavu-sans-fonts \
         gnome-extensions
 else
     echo "[ERROR] Unsupported distribution. Install dependencies manually."
