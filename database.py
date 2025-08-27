@@ -276,7 +276,8 @@ def get_previous_session(verbose: bool = True):
                 logger.debug("Fetched previous session: {} - {}", session.start, session.end)
             return result
         else:
-            logger.debug("No previous session found")
+            if verbose:
+                logger.debug("No previous session found")
             return None
     except Exception as e:
         logger.error("Failed to fetch previous session: {}", e)

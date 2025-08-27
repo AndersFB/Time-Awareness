@@ -1,4 +1,5 @@
 
+
 import datetime
 import subprocess
 import time
@@ -29,16 +30,24 @@ class TimeAwareness:
                  start_daemon: bool = False,
                  log_to_terminal: bool = False):
         self._setup(app_dir, log_to_terminal)
-        self._daemon_stop_event = threading.Event()
+        logger.info("Initializing TimeAwareness.")
 
         self.current_session = None
         self.today_total = None
-        self.last_update_date = None
+
+        # Runtime state for daemon
+        self._daemon_stop_event = threading.Event()
+        self._is_active = False
+        self._last_update_date = None
+        self._screen_locked = False
+        self._last_check = None
 
         self.load_state()
 
         self.monitor_lock_and_sleep = True
-        self.end_session_idle_threshold = 10
+        self.end_session_on_restart = False
+        self.end_session_idle_threshold = 10  # minutes
+
         if start_daemon:
             poll_interval = 5.0
             sleep_detection_threshold = 30.0
@@ -49,6 +58,17 @@ class TimeAwareness:
                 daemon=True
             )
             self.daemon_thread.start()
+
+        logger.info("TimeAwareness initialized.")
+
+    @property
+    def end_session_on_restart(self) -> bool:
+        return self._end_session_on_restart
+
+    @end_session_on_restart.setter
+    def end_session_on_restart(self, end: bool):
+        self._end_session_on_restart = end
+        logger.info("End session on restart set to {}", end)
 
     @property
     def monitor_lock_and_sleep(self) -> bool:
@@ -88,18 +108,21 @@ class TimeAwareness:
 
     def _check_day_rollover(self):
         today = datetime.date.today()
-        if today != self.last_update_date:
+        if today != self._last_update_date:
             logger.info("New day detected. Recalculating today_total.")
             self.today_total = 0
             midnight = datetime.datetime.combine(today, datetime.time.min)
 
-            # If current session started before midnight, count only time since midnight
+            # If a session survived past midnight, only count a small safe overlap to avoid phantom time.
             if self.current_session and self.current_session < midnight:
-                overlap = (datetime.datetime.now() - midnight).total_seconds()
-                self.today_total += overlap
-                logger.info("Added overlap from ongoing session: {} seconds", overlap)
+                elapsed_since_midnight = (datetime.datetime.now() - midnight).total_seconds()
+                if elapsed_since_midnight <= 600:  # cap at 10 minutes
+                    self.today_total += elapsed_since_midnight
+                    logger.info("Added overlap from ongoing session: {} seconds", elapsed_since_midnight)
+                else:
+                    logger.info("Skipped overlap from ongoing session: {}s exceeds cap (likely slept)", elapsed_since_midnight)
 
-            # Check last session if it overlaps midnight
+            # If the most recently SAVED session overlaps midnight, include only the portion after midnight
             previous = get_previous_session(verbose=False)
             if previous:
                 prev_start, prev_end, prev_duration = previous
@@ -108,12 +131,37 @@ class TimeAwareness:
                     self.today_total += overlap
                     logger.info("Added overlap from previous session: {} seconds", overlap)
 
-            self.last_update_date = today
+            self._last_update_date = today
             self.save_state()
+
+    def _get_system_uptime(self) -> float:
+        try:
+            if sys.platform.startswith("linux"):
+                with open("/proc/uptime") as f:
+                    return float(f.readline().split()[0])
+            elif sys.platform == "darwin":
+                output = subprocess.check_output(
+                    ["sysctl", "-n", "kern.boottime"]
+                ).decode()
+                import re
+                match = re.search(r"sec = (\d+)", output)
+                if match:
+                    boot_time = int(match.group(1))
+                    now = int(time.time())
+                    return float(now - boot_time)
+                else:
+                    logger.error("Failed to parse kern.boottime output: {}", output)
+                    return 0.0
+            else:
+                logger.warning("System uptime not supported on this platform: {}", sys.platform)
+                return 0.0
+        except Exception as e:
+            logger.error("Failed to read system uptime: {}", e)
+            return 0.0
 
     def save_state(self):
         saved_today = set_metadata("today_total", self.today_total)
-        set_metadata("last_update_date", self.last_update_date.isoformat())
+        set_metadata("last_update_date", self._last_update_date.isoformat())
 
         if self.current_session is not None:
             set_metadata("current_session", self.current_session.isoformat())
@@ -128,11 +176,11 @@ class TimeAwareness:
         last_date_str = get_metadata("last_update_date", "")
         if last_date_str:
             try:
-                self.last_update_date = datetime.date.fromisoformat(last_date_str)
+                self._last_update_date = datetime.date.fromisoformat(last_date_str)
             except Exception:
-                self.last_update_date = datetime.date.today()
+                self._last_update_date = datetime.date.today()
         else:
-            self.last_update_date = datetime.date.today()
+            self._last_update_date = datetime.date.today()
 
         session_str = get_metadata("current_session", "")
         if session_str:
@@ -164,6 +212,33 @@ class TimeAwareness:
         logger.info("Session ended at {} (duration: {})", end_time, session_duration)
         self.current_session = None
         self.today_total += session_duration.total_seconds()
+        self.save_state()
+        return session_duration
+
+    # ---------- Fix 2: allow retroactive session end at a chosen timestamp ----------
+    def end_session_at(self, end_time: datetime.datetime) -> Optional[datetime.timedelta]:
+        """End the current session at a specific time (e.g., just before sleep),
+        so we don't count the time gap as active.
+        """
+        if self.current_session is None:
+            logger.warning("Attempted to end session at {}, but no session was started.", end_time)
+            return None
+        if end_time < self.current_session:
+            # Guard: do not create negative durations
+            logger.warning("end_session_at called with end_time before current_session; clamping to current_session")
+            end_time = self.current_session
+        session_duration = end_time - self.current_session
+        saved = save_session(self.current_session, end_time, session_duration)
+        if not saved:
+            logger.error("Failed to save session from {} to {}", self.current_session, end_time)
+            return None
+        logger.info("Session ended at {} (duration: {}) [end_session_at]", end_time, session_duration)
+        self.current_session = None
+        # Update today's total conservatively: only add if end_time is today.
+        today = datetime.date.today()
+        if end_time.date() == today:
+            self.today_total += session_duration.total_seconds()
+        # Else, rely on _check_day_rollover() to compute today's overlap.
         self.save_state()
         return session_duration
 
@@ -230,7 +305,6 @@ class TimeAwareness:
             "sessions": get_sessions(count_sessions),
         }
 
-    # -------- Desktop-agnostic idle time --------
     def _get_idle_time_linux(self) -> Optional[datetime.timedelta]:
         """Try multiple backends to get idle time on Linux. Returns None if unknown."""
         # 1) GNOME Mutter IdleMonitor (preferred)
@@ -293,6 +367,7 @@ class TimeAwareness:
         if self.current_session is not None:
             self.end_session()
 
+    # ---------- Fix 3: use instance state and retro-end sessions on sleep gap ----------
     def run_daemon(self, poll_interval: float = 5.0, sleep_detection_threshold: float = 30.0):
         """
         Runs the TimeAwareness daemon to monitor activity and manage sessions.
@@ -302,61 +377,76 @@ class TimeAwareness:
             sleep_detection_threshold (float): Threshold (in seconds) for detecting system sleep via time gap.
         """
         logger.info("TimeAwareness daemon started. Press Ctrl+C to quit.")
-        is_active = False
-        last_check = datetime.datetime.now()
-        screen_locked = False
+        self._is_active = True
+        self._last_check = datetime.datetime.now()
+        self._screen_locked = False
+        last_uptime = self._get_system_uptime()
 
         # --- Subscribe to lock and sleep events ---
         if self.monitor_lock_and_sleep:
-            screen_locked = self._subscribe_lock_events(is_active)
-            self._subscribe_sleep_events(is_active)
+            self._screen_locked = self._subscribe_lock_events()
+            self._subscribe_sleep_events()
 
         try:
             while not self._daemon_stop_event.is_set():
+                # Check for day rollover (safe due to cap)
                 self._check_day_rollover()
 
                 now = datetime.datetime.now()
-                elapsed = (now - last_check).total_seconds()
-                last_check = now
+                prev_check = self._last_check
+                elapsed = (now - prev_check).total_seconds()
 
                 # Fallback sleep detection using time gap
                 if elapsed > sleep_detection_threshold:
                     logger.info("Detected sleep via elapsed gap (elapsed {:.2f}s > {:.2f}s). Ending session (active: {}).",
-                                elapsed, sleep_detection_threshold, is_active)
-                    if is_active:
+                                elapsed, sleep_detection_threshold, self._is_active)
+                    if self._is_active and self.current_session:
+                        # End the session at the last known active time so we don't count sleep
+                        self.end_session_at(prev_check)
+                    self._is_active = False
+
+                self._last_check = now
+
+                # Detect reboot
+                current_uptime = self._get_system_uptime()
+                if current_uptime < last_uptime:  # reboot detected
+                    logger.info("System reboot detected (uptime: {}).", current_uptime)
+                    if self.end_session_on_restart and self.current_session:
                         self.end_session()
-                        is_active = False
+                        logger.info("Session ended due to system restart.")
+                last_uptime = current_uptime
 
                 # Skip idle checks if locked
-                if self.monitor_lock_and_sleep and screen_locked:
+                if self.monitor_lock_and_sleep and self._screen_locked:
                     time.sleep(poll_interval)
                     continue
 
                 # Idle-based session control
                 idle_time = self.get_idle_time()
-                if is_active:
+                if self._is_active:
                     if idle_time >= self.end_session_idle_threshold:
                         self.end_session()
                         logger.info("Session ended due to inactivity (idle time: {} >= {}).",
                                     idle_time, self.end_session_idle_threshold)
-                        is_active = False
+                        self._is_active = False
                 else:
                     if idle_time < self.end_session_idle_threshold:
                         self.start_session()
                         logger.info("Session started due to user activity (idle time: {} < {}).",
                                     idle_time, self.end_session_idle_threshold)
-                        is_active = True
+                        self._is_active = True
 
                 time.sleep(poll_interval)
 
         except KeyboardInterrupt:
-            if is_active:
+            if self._is_active:
                 self.end_session()
                 logger.info("Session ended due to daemon exit.")
             logger.info("TimeAwareness daemon stopped.")
             self.save_state()
 
-    def _subscribe_lock_events(self, is_active_ref):
+    # ---------- Updated D-Bus subscriptions using instance state ----------
+    def _subscribe_lock_events(self):
         """
         Subscribe to D-Bus signals for screen lock/unlock.
         Returns initial lock state (bool).
@@ -370,14 +460,14 @@ class TimeAwareness:
         # Try GNOME ScreenSaver
         try:
             ss_iface = bus.get("org.gnome.ScreenSaver", "/org/gnome/ScreenSaver")
-            screen_locked = bool(ss_iface.GetActive())
-            logger.info("Using org.gnome.ScreenSaver for lock detection (locked={}).", screen_locked)
+            self._screen_locked = bool(ss_iface.GetActive())
+            logger.info("Using org.gnome.ScreenSaver for lock detection (locked={}).", self._screen_locked)
 
             def on_active_changed(locked):
-                self._handle_lock_event(bool(locked), is_active_ref)
+                self._handle_lock_event(bool(locked))
 
             ss_iface.onActiveChanged = on_active_changed
-            return screen_locked
+            return self._screen_locked
 
         except Exception:
             logger.warning("Could not connect to ActiveChanged on org.gnome.ScreenSaver.")
@@ -386,48 +476,50 @@ class TimeAwareness:
         try:
             ss_iface = bus.get("org.freedesktop.ScreenSaver", "/org/freedesktop/ScreenSaver")
             try:
-                screen_locked = bool(ss_iface.GetActive())
+                self._screen_locked = bool(ss_iface.GetActive())
             except Exception:
-                screen_locked = bool(getattr(ss_iface, "Active", False))
+                self._screen_locked = bool(getattr(ss_iface, "Active", False))
 
-            logger.info("Using org.freedesktop.ScreenSaver for lock detection (locked={}).", screen_locked)
+            logger.info("Using org.freedesktop.ScreenSaver for lock detection (locked={}).", self._screen_locked)
 
             def on_active_changed(locked):
-                self._handle_lock_event(bool(locked), is_active_ref)
+                self._handle_lock_event(bool(locked))
 
             try:
                 ss_iface.onActiveChanged = on_active_changed
             except Exception:
                 logger.warning("Could not connect to ActiveChanged on org.freedesktop.ScreenSaver.")
-            return screen_locked
+            return self._screen_locked
 
         except Exception:
             logger.warning("No ScreenSaver D-Bus interface available; lock detection disabled.")
             return False
 
-    def _handle_lock_event(self, locked: bool, is_active_ref):
+    def _handle_lock_event(self, locked: bool):
         """
         Handle lock/unlock events: end session on lock, start session on unlock if idle threshold is met.
         """
         if locked:
-            logger.info("Screen locked - ending session immediately (active: {}).", is_active_ref)
-            if is_active_ref:
+            logger.info("Screen locked - ending session immediately (active: {}).", self._is_active)
+            if self.current_session:
                 self.end_session()
-                is_active_ref = False
+            self._is_active = False
+            self._screen_locked = True
         else:
-            logger.info("Screen unlocked (active: {}).", is_active_ref)
-            if not is_active_ref:
+            logger.info("Screen unlocked (active: {}).", self._is_active)
+            self._screen_locked = False
+            if not self._is_active:
                 idle_time = self.get_idle_time()
                 if idle_time < self.end_session_idle_threshold:
                     self.start_session()
                     logger.info("Session started after unlock (idle time: {} < {}).",
                                 idle_time, self.end_session_idle_threshold)
-                    is_active_ref = True
+                    self._is_active = True
                 else:
                     logger.info("Screen unlock idle time: {} >= {}.",
                                 idle_time, self.end_session_idle_threshold)
 
-    def _subscribe_sleep_events(self, is_active_ref):
+    def _subscribe_sleep_events(self):
         """
         Subscribe to D-Bus signals for system sleep/wake.
         """
@@ -436,12 +528,11 @@ class TimeAwareness:
             login1 = sysbus.get("org.freedesktop.login1", "/org/freedesktop/login1")
 
             def on_prepare_for_sleep(start_sleeping):
-                nonlocal is_active_ref
                 if start_sleeping:
-                    logger.info("System preparing for sleep - ending session (active: {}).", is_active_ref)
-                    if is_active_ref:
+                    logger.info("System preparing for sleep - ending session (active: {}).", self._is_active)
+                    if self.current_session:
                         self.end_session()
-                        is_active_ref = False
+                    self._is_active = False
                 else:
                     logger.info("System resumed from sleep.")
 
@@ -449,3 +540,4 @@ class TimeAwareness:
             logger.info("Subscribed to org.freedesktop.login1 PrepareForSleep for sleep detection.")
         except Exception:
             logger.warning("Could not subscribe to logind PrepareForSleep; using elapsed-gap detection.")
+

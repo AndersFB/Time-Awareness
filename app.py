@@ -44,6 +44,7 @@ class TrayApp:
             self.tmp_icon_dir.mkdir(parents=True)
 
         self.ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
+        logger.info("Initializing TrayApp.")
 
         self.indicator = AppIndicator3.Indicator.new(
             APP_ID, "", AppIndicator3.IndicatorCategory.APPLICATION_STATUS
@@ -215,8 +216,8 @@ class TrayApp:
         if icon_file.exists():
             return icon_file
 
-        # Determine fill percentage (1 hour = full circle)
-        fill_fraction = min(total_minutes / 60.0, 1.0)  # Max 1.0 (100%)
+        # Determine fill percentage (1 hour = full circle, 1.5 hour = half circle etc.)
+        fill_fraction = min((total_minutes % 60.0) / 60.0, 1.0)  # Max 1.0 (100%)
 
         # Determine color based on time
         if total_minutes < 60:

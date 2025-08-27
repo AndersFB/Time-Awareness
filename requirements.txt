@@ -1,5 +1,5 @@
 pytest
-pygobject==3.50.1
+pygobject
 pydbus
 pillow
 loguru

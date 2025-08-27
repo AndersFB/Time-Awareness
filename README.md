@@ -52,6 +52,8 @@ Time Awareness is a productivity tool that tracks your computer usage sessions, 
   - `libayatana-appindicator3-dev` → ensures AppIndicator works properly.
   - `dbus` and `libdbus-glib-1-dev` → needed for idle detection via D-Bus.
 
+NOTE: pygobject > 3.50.1 requires "sudo apt install libgirepository-2.0-dev". pygobject <= 3.50.1 requires "sudo apt install libgirepository1.0-dev"!
+
 ---
 
 ### Idle Detection
