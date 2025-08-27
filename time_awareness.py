@@ -242,9 +242,10 @@ class TimeAwareness:
         self.save_state()
         return session_duration
 
-    def current_session_info(self) -> Optional[Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]:
+    def current_session_info(self, verbose: bool = True) -> Optional[Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]:
         if self.current_session is None:
-            logger.warning("No session started.")
+            if verbose:
+                logger.warning("No session started.")
             return None
         now = datetime.datetime.now()
         duration = now - self.current_session
@@ -252,7 +253,7 @@ class TimeAwareness:
 
     def previous_session(self, verbose: bool = True) -> Optional[Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]:
         session = get_previous_session(verbose=verbose)
-        if session is None:
+        if session is None and verbose:
             logger.warning("No previous sessions.")
         return session
 
@@ -367,7 +368,6 @@ class TimeAwareness:
         if self.current_session is not None:
             self.end_session()
 
-    # ---------- Fix 3: use instance state and retro-end sessions on sleep gap ----------
     def run_daemon(self, poll_interval: float = 5.0, sleep_detection_threshold: float = 30.0):
         """
         Runs the TimeAwareness daemon to monitor activity and manage sessions.
@@ -418,6 +418,7 @@ class TimeAwareness:
 
                 # Skip idle checks if locked
                 if self.monitor_lock_and_sleep and self._screen_locked:
+                    logger.debug("Sleeping for {} seconds.", sleep_detection_threshold)
                     time.sleep(poll_interval)
                     continue
 
@@ -445,8 +446,7 @@ class TimeAwareness:
             logger.info("TimeAwareness daemon stopped.")
             self.save_state()
 
-    # ---------- Updated D-Bus subscriptions using instance state ----------
-    def _subscribe_lock_events(self):
+    def _subscribe_lock_events(self) -> bool:
         """
         Subscribe to D-Bus signals for screen lock/unlock.
         Returns initial lock state (bool).
