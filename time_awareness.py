@@ -137,7 +137,6 @@ class TimeAwareness:
     def _get_system_uptime(self) -> float:
         try:
             if sys.platform.startswith("linux"):
-                logger.debug("Reading system uptime from /proc/uptime.")
                 with open("/proc/uptime") as f:
                     return float(f.readline().split()[0])
             elif sys.platform == "darwin":
@@ -369,7 +368,7 @@ class TimeAwareness:
         if self.current_session is not None:
             self.end_session()
 
-    def run_daemon(self, poll_interval: float = 5.0, sleep_detection_threshold: float = 30.0):
+    def run_daemon(self, poll_interval: float = 5.0, sleep_detection_threshold: float = 30.0, verbose: bool = False):
         """
         Runs the TimeAwareness daemon to monitor activity and manage sessions.
 
@@ -382,6 +381,10 @@ class TimeAwareness:
         self._last_check = datetime.datetime.now()
         self._screen_locked = False
         last_uptime = self._get_system_uptime()
+
+        # Ensure a session is started if active but no session exists
+        if self._is_active and self.current_session is None:
+            self.start_session()
 
         # --- Subscribe to lock and sleep events ---
         if self.monitor_lock_and_sleep:
@@ -425,7 +428,9 @@ class TimeAwareness:
 
                 # Idle-based session control
                 idle_time = self.get_idle_time()
-                logger.debug("TimeAwareness daemon received idle time: {}", idle_time)
+                if verbose:
+                    logger.debug("Idle time: {} (active: {})", idle_time, self._is_active)
+
                 if self._is_active:
                     if idle_time >= self.end_session_idle_threshold:
                         self.end_session()
