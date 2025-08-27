@@ -425,6 +425,7 @@ class TimeAwareness:
 
                 # Idle-based session control
                 idle_time = self.get_idle_time()
+                logger.debug("TimeAwareness daemon received idle time: {}", idle_time)
                 if self._is_active:
                     if idle_time >= self.end_session_idle_threshold:
                         self.end_session()
