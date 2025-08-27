@@ -81,7 +81,8 @@ Comment=Track active usage time
 EOL
 fi
 
+ln -sf "$AUTOSTART_DIR/time_awareness.desktop" "$HOME/.local/share/applications/time_awareness.desktop"
 echo "[INFO] Installation completed. Starting app."
-gtk-launch time_awareness.desktop
+gtk-launch time_awareness
 
 echo "[INFO] The app will start automatically on next login."
