@@ -137,6 +137,7 @@ class TimeAwareness:
     def _get_system_uptime(self) -> float:
         try:
             if sys.platform.startswith("linux"):
+                logger.debug("Reading system uptime from /proc/uptime.")
                 with open("/proc/uptime") as f:
                     return float(f.readline().split()[0])
             elif sys.platform == "darwin":
