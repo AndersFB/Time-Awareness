@@ -79,6 +79,7 @@ X-GNOME-Autostart-enabled=true
 Name=Time Awareness
 Comment=Track active usage time
 EOL
+  chmod +x "$AUTOSTART_DIR/time_awareness.desktop"
 fi
 
 if [ ! -f "$HOME/.local/share/applications/time_awareness.desktop" ]; then

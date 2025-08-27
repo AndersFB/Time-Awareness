@@ -2,7 +2,7 @@
 
 > **Inspired by the macOS app [Pandan](https://sindresorhus.com/pandan) by Sindre Sorhus.**
 
-Time Awareness is a productivity tool that tracks your computer usage sessions, providing daily summaries and statistics. It features a tray icon for Ubuntu (and other Linux desktops) that allows you to quickly view your current session, total time today, previous sessions, and more.
+Time Awareness is a productivity tool that tracks your computer usage sessions, providing daily summaries and statistics. It features a tray icon for Ubuntu, Debian, Fedora, CentOS, and other Linux desktops (with AyatanaAppIndicator3 support) that allows you to quickly view your current session, total time today, previous sessions, and more.
 
 ---
 
@@ -28,7 +28,7 @@ Time Awareness is a productivity tool that tracks your computer usage sessions, 
 ## Requirements
 
 - **Python 3.7+**
-- **Ubuntu (or Linux with AyatanaAppIndicator3 support)**
+- **Linux desktop with AyatanaAppIndicator3 support (Ubuntu, Debian, Fedora, CentOS, etc.)**
 - **Python dependencies:** (installed via `requirements.txt`)
   - `pytest`
   - `pygobject`
@@ -38,21 +38,38 @@ Time Awareness is a productivity tool that tracks your computer usage sessions, 
   - `peewee`
   - `typer`
 
-- **System packages (Ubuntu):**
+- **System packages:**
+
+  **Ubuntu/Debian:**
   ```bash
   sudo apt-get update
   sudo apt-get install \
       python3-gi \
+      libgtk-3-bin \
       gir1.2-ayatanaappindicator3-0.1 \
       libayatana-appindicator3-dev \
-      dbus \
-      libdbus-glib-1-dev
+      dbus libdbus-glib-1-dev \
+      libgirepository1.0-dev libgirepository-2.0-dev gir1.2-glib-2.0 \
+      gobject-introspection
   ```
-  - `python3-gi` and `gir1.2-ayatanaappindicator3-0.1` → required for the tray app.
-  - `libayatana-appindicator3-dev` → ensures AppIndicator works properly.
-  - `dbus` and `libdbus-glib-1-dev` → needed for idle detection via D-Bus.
+  - Required for tray icon, D-Bus idle detection, and PyGObject introspection.
 
-NOTE: pygobject > 3.50.1 requires "sudo apt install libgirepository-2.0-dev". pygobject <= 3.50.1 requires "sudo apt install libgirepository1.0-dev"!
+  **RHEL/CentOS/Fedora:**
+  ```bash
+  sudo yum install -y \
+      python3-gobject \
+      cairo cairo-devel \
+      libffi-devel glib2-devel \
+      dbus dbus-glib-devel \
+      gobject-introspection gobject-introspection-devel \
+      libjpeg-turbo libjpeg-turbo-devel \
+      gnome-extensions
+  ```
+  - Required for tray icon, D-Bus idle detection, PyGObject, and GNOME extension support.
+
+  **Note:**  
+  - For PyGObject > 3.50.1, you need `libgirepository-2.0-dev` (Debian/Ubuntu).  
+  - For PyGObject <= 3.50.1, you need `libgirepository1.0-dev` (Debian/Ubuntu).
 
 ---
 
@@ -166,11 +183,56 @@ If you did not use the automatic installer, you can set up autostart manually:
 
 ## Troubleshooting
 
-- If the tray icon does not appear:
-  - Ensure `python3-gi` and `gir1.2-ayatanaappindicator3-0.1` are installed.
-- If idle detection does not work:
-  - Ensure `dbus` is installed.
-- Logs are stored in `~/.time_awareness/timeawareness.log`.
+- **Log file:**  
+  All errors and activity are logged to `~/.time_awareness/timeawareness.log`.  
+  Check this file for details if the app fails to start or behaves unexpectedly.
+
+- **Common issues:**
+  - **Missing tray icon:**  
+    Ensure you have installed all required system packages for your distribution (see Requirements).  
+    On GNOME, make sure the AppIndicator extension is enabled (`gnome-extensions list | grep appindicator`).
+  - **Python errors:**  
+    Make sure you are using Python 3.7 or newer and have activated the virtual environment (`source ~/.time_awareness/.venv/bin/activate`).
+  - **Idle detection not working:**  
+    Confirm that `pydbus` is installed and D-Bus is running.  
+    Some desktop environments may not support idle detection; check the log for warnings.
+  - **Autostart not working:**  
+    Verify that `~/.config/autostart/time_awareness.desktop` exists and is executable.  
+    You can test autostart by running `gtk-launch time_awareness` or restarting your session.
+
+- **Diagnosing problems:**
+  - Run the app from a terminal to see live logs:
+    ```bash
+    ~/.time_awareness/.venv/bin/python ~/.time_awareness/app.py
+    ```
+  - Check for missing dependencies:
+    ```bash
+    python3 -m pip check
+    ```
+  - Reinstall system packages if you see import errors for `gi`, `pygobject`, or `dbus`.
+
+---
+
+## Uninstall (Quick Install)
+
+To fully remove Time Awareness if you installed via the quick install script:
+
+1. **Delete the app directory:**
+   ```bash
+   rm -rf ~/.time_awareness
+   ```
+
+2. **Remove the autostart entry:**
+   ```bash
+   rm -f ~/.config/autostart/time_awareness.desktop
+   ```
+
+3. **Remove the application symlink (if present):**
+   ```bash
+   rm -f ~/.local/share/applications/time_awareness.desktop
+   ```
+
+This will remove all files and autostart entries created by the quick install script.
 
 ---
 
