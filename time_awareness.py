@@ -388,6 +388,7 @@ class TimeAwareness:
             self._subscribe_sleep_events()
 
         try:
+            logger.debug("Entering daemon loop.")
             while not self._daemon_stop_event.is_set():
                 # Check for day rollover (safe due to cap)
                 self._check_day_rollover()
@@ -418,7 +419,6 @@ class TimeAwareness:
 
                 # Skip idle checks if locked
                 if self.monitor_lock_and_sleep and self._screen_locked:
-                    logger.debug("Sleeping for {} seconds.", sleep_detection_threshold)
                     time.sleep(poll_interval)
                     continue
 
