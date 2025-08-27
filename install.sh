@@ -81,7 +81,10 @@ Comment=Track active usage time
 EOL
 fi
 
-ln -sf "$AUTOSTART_DIR/time_awareness.desktop" "$HOME/.local/share/applications/time_awareness.desktop"
+if [ ! -f "$HOME/.local/share/applications/time_awareness.desktop" ]; then
+  ln -sf "$AUTOSTART_DIR/time_awareness.desktop" "$HOME/.local/share/applications/time_awareness.desktop"
+fi
+
 echo "[INFO] Installation completed. Starting app."
 gtk-launch time_awareness
 
