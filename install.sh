@@ -3,13 +3,9 @@ set -e
 
 function ask_proceed() {
   read -p "Proceed? [Y/n]: " -r answer
-  if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
-    return 0
-  elif [[ "$answer" =~ ^[Nn]$ ]]; then
+  if [[ "$answer" =~ ^[Nn]$ ]]; then
     echo "Aborted."
     exit 1
-  else
-    ask_proceed
   fi
 }
 
@@ -31,7 +27,11 @@ echo
 # Detect OS family (Debian/Ubuntu vs RHEL/CentOS)
 if command -v apt-get >/dev/null 2>&1; then
   echo "Step 1: Update package list (requires sudo, you may be asked for your password)."
-  ask_proceed
+  read -p "Proceed? [Y/n]: " -r answer
+  if [[ "$answer" =~ ^[Nn]$ ]]; then
+    echo "Aborted."
+    exit 1
+  fi
   sudo apt-get update -qq
   echo "Step 2: Install required packages (requires sudo, you may be asked for your password)."
   ask_proceed
