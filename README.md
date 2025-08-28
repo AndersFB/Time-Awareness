@@ -140,6 +140,25 @@ pip install -r requirements.txt
 
 ---
 
+## Updating the Application
+
+To update Time Awareness to the latest version, use the provided update script:
+
+```bash
+bash ~/.time_awareness/scripts/update.sh
+```
+
+**What it does:**
+- Checks if the application directory exists.
+- Fetches the latest changes from the repository.
+- Merges updates if available.
+- Restarts the tray app automatically.
+- Shows progress bars and prompts for confirmation before proceeding.
+
+Use this script whenever you want to upgrade to the newest release without reinstalling.
+
+---
+
 ## Running the Tray App on Ubuntu
 
 To start the tray app:
