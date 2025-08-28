@@ -2,7 +2,10 @@
 set -e
 
 function ask_proceed() {
-  read -p "Proceed? [Y/n]: " -r answer
+  echo -n "Proceed? [Y/n]: "
+  # Flush output to ensure prompt is visible
+  fflush() { true; } 2>/dev/null || true
+  read -r answer
   if [[ "$answer" =~ ^[Nn]$ ]]; then
     echo "Aborted."
     exit 1
