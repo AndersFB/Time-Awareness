@@ -315,6 +315,8 @@ class TrayApp:
         Show a dialog with session history and statistics.
         """
         hist = self.ta.history()
+        number_of_sessions = len(hist['sessions'])
+        number_of_sessions_digits = len(str(number_of_sessions)) if number_of_sessions > 0 else 1
         logger.info("History dialog opened. Sessions: {}", len(hist['sessions']))
 
         msg = (
@@ -324,15 +326,15 @@ class TrayApp:
             f"7-day avg: {format_duration(hist['seven_day_average'])}\n"
             f"Weekday avg: {format_duration(hist['weekday_average'])}\n"
             f"Total avg: {format_duration(hist['total_average'])}\n"
-            f"Sessions: {len(hist['sessions'])}\n\n"
+            f"Sessions: {number_of_sessions}\n\n"
         )
 
         session_lines = []
-        for session_info in hist['sessions']:
+        for i, session_info in enumerate(hist['sessions'], start=1):
             session_start, session_end, session_duration = session_info
             session_date = f"{format_date(session_start)} {format_time(session_start)}–{format_time(session_end)}"
             session_dur = format_duration(session_duration)
-            session_lines.append(f"{session_date} ({session_dur})")
+            session_lines.append(f"({str(i).rjust(number_of_sessions_digits)}/{number_of_sessions}) {session_date} ({session_dur})")
         msg += "\n".join(session_lines) if session_lines else "No previous sessions."
 
         dialog = Gtk.Dialog(
