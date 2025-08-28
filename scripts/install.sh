@@ -2,7 +2,7 @@
 set -e
 
 function ask_proceed() {
-  echo -n "Proceed? [Y/n]: " > /dev/tty
+  echo -n " Proceed? [Y/n]: " > /dev/tty
   read -r answer < /dev/tty
   if [[ "$answer" =~ ^[Nn]$ ]]; then
     echo "Aborted." > /dev/tty
@@ -27,7 +27,7 @@ echo
 
 # Detect OS family (Debian/Ubuntu vs RHEL/CentOS)
 if command -v apt-get >/dev/null 2>&1; then
-  echo "Step 1: Update package list and install required packages (requires sudo, you may be asked for your password)."
+  echo -n "Step 1: Update package list and install required packages (requires sudo, you may be asked for your password)."
   ask_proceed
   sudo apt-get update -qq
   PKGS=(
@@ -47,7 +47,7 @@ if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get install -y "$pkg" >/dev/null 2>&1 && progress_bar 10
   done
 elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
-  echo "Step 1: Install required packages (requires sudo, you may be asked for your password)."
+  echo -n "Step 1: Install required packages (requires sudo, you may be asked for your password)."
   ask_proceed
   PKGS=(
     python3-gobject
@@ -72,7 +72,8 @@ else
   exit 1
 fi
 
-echo "Step 2: Clone or update the Time Awareness repository and create Python virtual environment."
+echo
+echo -n "Step 2: Clone or update the Time Awareness repository and create Python virtual environment."
 ask_proceed
 INSTALL_DIR="$HOME/.time_awareness/src"
 if [ -d "$INSTALL_DIR" ]; then
@@ -91,11 +92,13 @@ else
     gnome-extensions enable "appindicatorsupport@rgcjonas.gmail.com" >/dev/null 2>&1 && progress_bar 5
   fi
 
-  echo -n "Creating Python virtual environment"
+  echo -n "Creating Python virtual environment in $INSTALL_DIR/.venv "
   python3 -m venv .venv >/dev/null 2>&1 && progress_bar 10
 fi
 
-echo "Step 3: Activate Python virtual environment and install Python dependencies."
+echo
+echo-n  "Step 3: Activate Python virtual environment and install Python dependencies."
+ask_proceed
 source .venv/bin/activate
 echo -n "Upgrading pip "
 pip install --upgrade pip >/dev/null 2>&1 && progress_bar 5
@@ -108,13 +111,14 @@ if ! dpkg -s libgirepository-2.0-dev &>/dev/null; then
   PIP_REQUIREMENTS_FILE="requirements_pinned.txt"
 fi
 
-echo -n "Installing Python dependencies from $PIP_REQUIREMENTS_FILE "
+echo -n "Installing Python dependencies from $INSTALL_DIR/$PIP_REQUIREMENTS_FILE "
 pip install -U -r "$PIP_REQUIREMENTS_FILE" >/dev/null 2>&1 && progress_bar 10
 
 AUTOSTART_DESKTOP_ENTRY="$HOME/.config/autostart/time_awareness.desktop"
 APPLICATIONS_DESKTOP_ENTRY="$HOME/.local/share/applications/time_awareness.desktop"
 
-echo "Step 5: Create autostart entry and launch the app."
+echo
+echo -n "Step 4: Create autostart entry and launch the app."
 ask_proceed
 if [ ! -f "$AUTOSTART_DESKTOP_ENTRY" ]; then
   echo "Creating autostart entry at $AUTOSTART_DESKTOP_ENTRY"
@@ -138,9 +142,9 @@ if [ ! -f "$APPLICATIONS_DESKTOP_ENTRY" ]; then
   ln -sf "$AUTOSTART_DESKTOP_ENTRY" "$APPLICATIONS_DESKTOP_ENTRY"
 fi
 
-echo -n "Launching the app "
+echo -n "Launch the app."
 ask_proceed
-gtk-launch time_awareness >/dev/null 2>&1 && progress_bar 10
+gtk-launch time_awareness >/dev/null 2>&1
 
 echo "Installation completed. The app will start automatically on next login. You can now close this terminal."
 echo "You can uninstall the app by running the uninstall.sh script located in $INSTALL_DIR/scripts."
