@@ -557,3 +557,5 @@ class TimeAwareness:
         self._last_update_date = datetime.date.today()
         self.save_state()
         logger.info("Database reset: all data cleared.")
+
+        self.start_session()
