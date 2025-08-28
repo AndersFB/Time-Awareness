@@ -2,12 +2,11 @@
 set -e
 
 function ask_proceed() {
-  echo -n "Proceed? [Y/n]: "
-  # Flush output to ensure prompt is visible
-  fflush() { true; } 2>/dev/null || true
+  # Write prompt directly to terminal
+  echo -n "Proceed? [Y/n]: " > /dev/tty
   read -r answer < /dev/tty
   if [[ "$answer" =~ ^[Nn]$ ]]; then
-    echo "Aborted."
+    echo "Aborted." > /dev/tty
     exit 1
   fi
 }
