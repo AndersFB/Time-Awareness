@@ -25,6 +25,12 @@ echo "Welcome to the Time Awareness installer."
 echo "This script will install required system and Python dependencies, clone the repository, and set up autostart."
 echo
 
+# Check for GNOME desktop environment
+if [ "$XDG_CURRENT_DESKTOP" != "GNOME" ] && [ "$DESKTOP_SESSION" != "gnome" ]; then
+  echo "[ERROR] GNOME desktop environment is required to run this installer."
+  exit 1
+fi
+
 # Detect OS family (Debian/Ubuntu vs RHEL/CentOS)
 if command -v apt-get >/dev/null 2>&1; then
   echo -n "Step 1: Update package list and install required packages (requires sudo, you may be asked for your password)."
