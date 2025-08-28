@@ -31,11 +31,11 @@ echo
 echo -n "Confirm uninstallation."
 ask_proceed
 
-echo -n "Removing application files "
+echo -n "Removing application files in $APP_DIR "
 rm -rf "$APP_DIR" >/dev/null 2>&1 && progress_bar 5
-echo -n "Removing autostart entry "
+echo -n "Removing autostart entry $AUTOSTART_DESKTOP_ENTRY "
 rm -f "$AUTOSTART_DESKTOP_ENTRY" >/dev/null 2>&1 && progress_bar 5
-echo -n "Removing applications menu entry "
+echo -n "Removing applications menu entry $APPLICATIONS_DESKTOP_ENTRY "
 rm -f "$APPLICATIONS_DESKTOP_ENTRY" >/dev/null 2>&1 && progress_bar 5
 
 echo "Uninstallation complete."
