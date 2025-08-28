@@ -178,3 +178,4 @@ if command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
   echo "[NOTICE] If the app is not visible in the system tray, try to log out and back in again or restart you computer."
   echo "[NOTICE] Make sure the appindicator GNOME extension is enabled by running the command: gnome-extensions info appindicatorsupport@rgcjonas.gmail.com"
 fi
+
