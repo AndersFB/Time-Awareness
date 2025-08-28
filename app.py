@@ -328,11 +328,9 @@ class TrayApp:
         )
 
         session_lines = []
-        for s in hist['sessions']:
-            start = format_time(s['start'])
-            end = format_time(s['end'])
-            dur = format_duration(s['duration'])
-            session_lines.append(f"{format_date(s['start'])} {start}–{end} ({dur})")
+        for session in hist['sessions']:
+            start, end, dur = session
+            session_lines.append(f"{format_date(start)}–{format_date(end)} ({format_duration(dur)})")
         msg += "\n".join(session_lines) if session_lines else "No previous sessions."
 
         dialog = Gtk.Dialog(
@@ -352,10 +350,6 @@ class TrayApp:
 
         box = dialog.get_content_area()
         box.pack_start(scrolled, True, True, 0)
-        dialog.set_type_hint(Gtk.WindowTypeHint.DIALOG)
-        dialog.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
-        dialog.set_keep_above(True)
-        dialog.present()
         dialog.show_all()
         dialog.run()
         dialog.destroy()
