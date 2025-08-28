@@ -2,7 +2,7 @@
 set -e
 
 function ask_proceed() {
-  echo -n "Proceed? [Y/n]: " > /dev/tty
+  echo -n " Proceed? [Y/n]: " > /dev/tty
   read -r answer < /dev/tty
   if [[ "$answer" =~ ^[Nn]$ ]]; then
     echo "Aborted." > /dev/tty
@@ -28,7 +28,7 @@ APPLICATIONS_DESKTOP_ENTRY="$HOME/.local/share/applications/time_awareness.deskt
 echo "Welcome to the Time Awareness uninstaller."
 echo "This script will remove the application files and autostart entry."
 echo
-echo "Confirm uninstallation."
+echo -n "Confirm uninstallation."
 ask_proceed
 
 echo -n "Removing application files "
