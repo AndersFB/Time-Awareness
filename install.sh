@@ -65,11 +65,12 @@ else
 fi
 
 AUTOSTART_DIR="$HOME/.config/autostart"
+AUTOSTART_DESKTOP_ENTRY="$AUTOSTART_DIR/time_awareness.desktop"
 
-if [ ! -f "$AUTOSTART_DIR/time_awareness.desktop" ]; then
+if [ ! -f "$AUTOSTART_DESKTOP_ENTRY" ]; then
   echo "[INFO] Creating autostart entry"
   mkdir -p "$AUTOSTART_DIR"
-  cat > "$AUTOSTART_DIR/time_awareness.desktop" <<EOL
+  cat > "$AUTOSTART_DESKTOP_ENTRY" <<EOL
 [Desktop Entry]
 Type=Application
 Exec=$INSTALL_DIR/.venv/bin/python $INSTALL_DIR/app.py
@@ -79,14 +80,14 @@ X-GNOME-Autostart-enabled=true
 Name=Time Awareness
 Comment=Track active usage time
 EOL
-  chmod +x "$AUTOSTART_DIR/time_awareness.desktop"
+  chmod +x "$AUTOSTART_DESKTOP_ENTRY"
 fi
 
 if [ ! -f "$HOME/.local/share/applications/time_awareness.desktop" ]; then
-  ln -sf "$AUTOSTART_DIR/time_awareness.desktop" "$HOME/.local/share/applications/time_awareness.desktop"
+  ln -sf "$AUTOSTART_DESKTOP_ENTRY" "$HOME/.local/share/applications/time_awareness.desktop"
 fi
 
 echo "[INFO] Installation completed. Starting app."
 gtk-launch time_awareness
 
-echo "[INFO] The app will start automatically on next login."
+echo "[INFO] The app will start automatically on next login. You can now close this terminal."
