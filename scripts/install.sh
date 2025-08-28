@@ -97,7 +97,7 @@ else
 fi
 
 echo
-echo-n  "Step 3: Activate Python virtual environment and install Python dependencies."
+echo -n  "Step 3: Activate Python virtual environment and install Python dependencies."
 ask_proceed
 source .venv/bin/activate
 echo -n "Upgrading pip "
