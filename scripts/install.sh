@@ -33,7 +33,7 @@ fi
 
 # Detect OS family (Debian/Ubuntu vs RHEL/CentOS)
 if command -v apt-get >/dev/null 2>&1; then
-  echo -n "Step 1: Update package list and install required packages (requires sudo, you may be asked for your password)."
+  echo -n "Step 1: Update package list and install required packages using apt-get (requires sudo, you may be asked for your password)."
   ask_proceed
   sudo apt-get update -qq
   PKGS=(
@@ -53,12 +53,17 @@ if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get install -y "$pkg" >/dev/null 2>&1 && progress_bar 10
   done
 elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
-  echo -n "Step 1: Install required packages (requires sudo, you may be asked for your password)."
+  echo -n "Step 1: Install required packages using dnf (requires sudo, you may be asked for your password)."
   ask_proceed
+  echo -n "Enabling CRB repository "
+  sudo dnf sudo dnf config-manager --set-enabled crb && sudo dnf makecache >/dev/null 2>&1 && progress_bar 10
   PKGS=(
     python3-gobject
+    libayatana-appindicator3
+    libayatana-appindicator3-devel
     cairo
     cairo-devel
+    cairo-gobject-devel
     libffi-devel
     glib2-devel
     dbus
@@ -67,11 +72,12 @@ elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
     gobject-introspection-devel
     libjpeg-turbo
     libjpeg-turbo-devel
-    gnome-extensions
+    gnome-shell
+    gnome-extensions-app
   )
   for pkg in "${PKGS[@]}"; do
     echo -n "Installing $pkg "
-    sudo yum install -y "$pkg" >/dev/null 2>&1 && progress_bar 10
+    sudo dnf install -y "$pkg" >/dev/null 2>&1 && progress_bar 10
   done
 else
   echo "[ERROR] Unsupported distribution. Install dependencies manually."
@@ -92,10 +98,23 @@ else
   cd "$INSTALL_DIR"
 
   if command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
-    echo -n "Installing appindicator GNOME extension "
-    gnome-extensions install "$INSTALL_DIR/lib/appindicatorsupportrgcjonas.gmail.com.v60.shell-extension.zip" >/dev/null 2>&1 && progress_bar 10
-    echo -n "Enabling appindicator GNOME extension "
-    gnome-extensions enable "appindicatorsupport@rgcjonas.gmail.com" >/dev/null 2>&1 && progress_bar 5
+    # Check if appindicator extension is enabled
+    EXT_STATUS=$(gnome-extensions info appindicatorsupport@rgcjonas.gmail.com 2>/dev/null | grep -F 'Enabled:' | awk '{print $2}')
+    if [ "$EXT_STATUS" != "Yes" ]; then
+      echo -n "Installing appindicator GNOME extension "
+      gnome-extensions install "$INSTALL_DIR/lib/appindicatorsupportrgcjonas.gmail.com.v60.shell-extension.zip" >/dev/null 2>&1 && progress_bar 10
+      echo "[NOTICE] Before you can enable the extension you may need to log out and log back in again or restart you computer."
+      echo -n "Enabling appindicator GNOME extension "
+      gnome-extensions enable "appindicatorsupport@rgcjonas.gmail.com" >/dev/null 2>&1 && progress_bar 5
+    fi
+
+    EXT_STATUS=$(gnome-extensions info appindicatorsupport@rgcjonas.gmail.com 2>/dev/null | grep -F 'Enabled:' | awk '{print $2}')
+    if [ "$EXT_STATUS" != "Yes" ]; then
+      echo "[WARNING] The appindicator GNOME extension is still not enabled!"
+      echo "[WARNING] The app will not work correctly without this extension."
+      echo "[WARNING] Try to log out and back in again or restart you computer and then rerun the install script."
+      exit 1
+    fi
   fi
 
   echo -n "Creating Python virtual environment in $INSTALL_DIR/.venv "
@@ -154,3 +173,9 @@ gtk-launch time_awareness >/dev/null 2>&1 && progress_bar 5
 echo
 echo "Installation completed. The app will start automatically on next login. You can now close this terminal."
 echo "You can uninstall the app by running the uninstall script $INSTALL_DIR/scripts/uninstall.sh."
+
+if command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+  echo
+  echo "[NOTICE] If the app is not visible in the system tray, try to log out and back in again or restart you computer."
+  echo "[NOTICE] Make sure the appindicator GNOME extension is enabled by running the command: gnome-extensions info appindicatorsupport@rgcjonas.gmail.com"
+fi
