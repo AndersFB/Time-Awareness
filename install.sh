@@ -5,7 +5,7 @@ function ask_proceed() {
   echo -n "Proceed? [Y/n]: "
   # Flush output to ensure prompt is visible
   fflush() { true; } 2>/dev/null || true
-  read -r answer
+  read -r answer < /dev/tty
   if [[ "$answer" =~ ^[Nn]$ ]]; then
     echo "Aborted."
     exit 1
