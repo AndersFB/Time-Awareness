@@ -2,8 +2,7 @@
 set -e
 
 function ask_proceed() {
-  echo -n "Proceed? [Y/n]: "
-  read -r answer
+  read -p "Proceed? [Y/n]: " -r answer
   if [[ "$answer" =~ ^[Nn]$ ]]; then
     echo "Aborted."
     exit 1
