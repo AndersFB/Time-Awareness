@@ -301,6 +301,7 @@ def get_days_tracked():
         logger.error("Failed to fetch days tracked: {}", e)
         return 0
 
+@with_database
 def reset_database():
     """
     Delete all sessions and metadata from the database.
