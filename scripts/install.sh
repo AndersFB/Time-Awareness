@@ -26,7 +26,7 @@ echo "This script will install required system and Python dependencies, clone th
 echo
 
 # Check for GNOME desktop environment
-if [ "$XDG_CURRENT_DESKTOP" != "GNOME" ] && [ "$DESKTOP_SESSION" != "gnome" ]; then
+if [[ "$XDG_CURRENT_DESKTOP" != *GNOME* ]]; then
   echo "[ERROR] GNOME desktop environment is required to run this installer."
   exit 1
 fi
