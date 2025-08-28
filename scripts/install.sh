@@ -142,9 +142,9 @@ if [ ! -f "$APPLICATIONS_DESKTOP_ENTRY" ]; then
   ln -sf "$AUTOSTART_DESKTOP_ENTRY" "$APPLICATIONS_DESKTOP_ENTRY"
 fi
 
-echo -n "Launch the app."
-ask_proceed
-gtk-launch time_awareness >/dev/null 2>&1
+echo -n "Launching the app "
+gtk-launch time_awareness >/dev/null 2>&1 && progress_bar 5
 
+echo
 echo "Installation completed. The app will start automatically on next login. You can now close this terminal."
-echo "You can uninstall the app by running the uninstall.sh script located in $INSTALL_DIR/scripts."
+echo "You can uninstall the app by running the uninstall script $INSTALL_DIR/scripts/uninstall.sh."

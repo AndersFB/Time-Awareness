@@ -158,6 +158,11 @@ class TrayApp:
         item_history.connect("activate", self.on_history)
         self.menu.append(item_history)
 
+        # Reset (new button below History)
+        item_reset = Gtk.MenuItem(label="Reset")
+        item_reset.connect("activate", self.on_reset)
+        self.menu.append(item_reset)
+
         # Separator
         self.menu.append(Gtk.SeparatorMenuItem())
 
@@ -331,6 +336,27 @@ class TrayApp:
         dialog.format_secondary_text(msg)
         dialog.run()
         dialog.destroy()
+
+    def on_reset(self, widget):
+        """
+        Prompt the user to confirm before resetting the database.
+        """
+        dialog = Gtk.MessageDialog(
+            transient_for=None,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text="Reset Database"
+        )
+        dialog.format_secondary_text(
+            "Are you sure you want to reset all tracked data? This cannot be undone."
+        )
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.YES:
+            self.ta.reset()
+            logger.info("Database reset via tray menu.")
+            self.refresh()
 
     def quit(self):
         self.ta.quit_daemon()  # Stop the daemon thread if running
