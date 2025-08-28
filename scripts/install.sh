@@ -56,7 +56,7 @@ elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
   echo -n "Step 1: Install required packages using dnf (requires sudo, you may be asked for your password)."
   ask_proceed
   echo -n "Enabling CRB repository "
-  sudo dnf sudo dnf config-manager --set-enabled crb && sudo dnf makecache >/dev/null 2>&1 && progress_bar 10 || { echo "[ERROR] Failed to enable CRB repository" > /dev/tty; exit 1; }
+  sudo dnf config-manager --set-enabled crb && sudo dnf makecache >/dev/null 2>&1 && progress_bar 10 || { echo "[ERROR] Failed to enable CRB repository" > /dev/tty; exit 1; }
   PKGS=(
     python3-gobject
     libayatana-appindicator3
