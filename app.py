@@ -335,9 +335,17 @@ class TrayApp:
             session_lines.append(f"{format_date(s['start'])} {start}–{end} ({dur})")
         msg += "\n".join(session_lines) if session_lines else "No previous sessions."
 
+        # Create top-level window as parent
+        window = Gtk.Window()
+        window.set_title("History Parent")
+        window.set_default_size(1, 1)
+        window.set_decorated(False)
+        window.set_opacity(0)
+        window.show()  # Needs to be shown so dialog can be transient_for it
+
         dialog = Gtk.Dialog(
             title="Session History",
-            transient_for=None,
+            transient_for=window,
             modal=True,
             buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK)
         )
@@ -348,13 +356,14 @@ class TrayApp:
         textview = Gtk.TextView()
         textview.set_editable(False)
         textview.get_buffer().set_text(msg)
-        scrolled.add_with_viewport(textview)
+        scrolled.add(textview)
 
         box = dialog.get_content_area()
         box.pack_start(scrolled, True, True, 0)
         dialog.show_all()
         dialog.run()
         dialog.destroy()
+        window.destroy()
 
     def on_reset(self, widget):
         """
