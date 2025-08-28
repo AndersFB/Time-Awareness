@@ -3,7 +3,7 @@ import datetime
 
 from database import (
     save_session, get_sessions, set_metadata, get_metadata,
-    get_sessions_since, get_sessions_by_weekday, get_all_sessions, get_sessions_for_day,
+    get_sessions_since, get_sessions_by_weekday, get_sessions_for_day,
     get_previous_session, get_days_tracked
 )
 
@@ -43,11 +43,11 @@ def test_get_sessions_by_weekday():
     assert monday.weekday() in weekday_histories
     assert tuesday.weekday() in weekday_histories
 
-def test_get_all_sessions():
+def test_get_sessions():
     start = datetime.datetime(2024, 6, 1, 10, 0, 0)
     end = datetime.datetime(2024, 6, 1, 11, 0, 0)
     save_session(start, end, end - start)
-    sessions = get_all_sessions()
+    sessions = get_sessions()
     assert len(sessions) == 1
 
 def test_get_sessions_for_day():

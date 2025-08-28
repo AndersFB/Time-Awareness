@@ -114,7 +114,7 @@ def get_sessions(return_count: bool = False) -> Union[int, List[Tuple[datetime.d
     try:
         history = [
             (s.start, s.end, datetime.timedelta(seconds=s.duration))
-            for s in Session.select().order_by(Session.start)
+            for s in Session.select().order_by(Session.start.desc())
         ]
         logger.debug("Fetched {} sessions from history", len(history))
         return history
@@ -206,25 +206,6 @@ def get_sessions_by_weekday():
     except Exception as e:
         logger.error("Failed to fetch sessions by weekday: {}", e)
         return {}
-
-@with_database
-def get_all_sessions():
-    """
-    Get all session records.
-
-    Returns:
-        list: List of tuples (start, end, duration).
-    """
-    try:
-        history = [
-            (s.start, s.end, datetime.timedelta(seconds=s.duration))
-            for s in Session.select().order_by(Session.start)
-        ]
-        logger.debug("Fetched all sessions: {}", len(history))
-        return history
-    except Exception as e:
-        logger.error("Failed to fetch all sessions: {}", e)
-        return []
 
 @with_database
 def get_sessions_for_day(day: datetime.date):

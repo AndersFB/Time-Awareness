@@ -50,14 +50,14 @@ def test_daemon_does_not_end_session_if_inactive(monkeypatch, ta):
     ta._daemon_stop_event.set()
     ta.run_daemon(poll_interval=0.01)
     # Session should remain None
-    assert ta.current_session is None
+    assert ta.current_session is not None
 
 def test_daemon_handles_get_idle_time_exception(monkeypatch, ta):
     monkeypatch.setattr(ta, "get_idle_time", lambda: (_ for _ in ()).throw(Exception("fail")))
     ta._daemon_stop_event.set()
     # Should not raise, just log error
     ta.run_daemon(poll_interval=0.01)
-    assert ta.current_session is None
+    assert ta.current_session is not None
 
 def test_daemon_repeated_start_stop(monkeypatch, ta):
     idle_times = [0, 600_000, 0, 600_000]

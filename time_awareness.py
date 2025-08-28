@@ -18,7 +18,7 @@ except Exception as e:
 from database import (
     save_session, get_sessions,
     set_metadata, get_metadata, get_sessions_since, get_sessions_by_weekday,
-    get_all_sessions, get_sessions_for_day, get_previous_session, get_days_tracked, configure_database,
+    get_sessions_for_day, get_previous_session, get_days_tracked, configure_database,
     create_tables_if_not_exist,
     reset_database
 )
@@ -288,7 +288,7 @@ class TimeAwareness:
         return sum(averages, datetime.timedelta()) / len(averages)
 
     def total_average(self) -> datetime.timedelta:
-        history = get_all_sessions()
+        history = get_sessions()
         if not history:
             return datetime.timedelta()
         total = sum((duration for start, end, duration in history), datetime.timedelta())
