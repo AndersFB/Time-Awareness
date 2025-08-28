@@ -213,9 +213,17 @@ If you did not use the automatic installer, you can set up autostart manually:
 
 ---
 
-## Uninstall (Quick Install)
+## Uninstall
 
-To fully remove Time Awareness if you installed via the quick install script:
+To fully remove Time Awareness if you installed via the quick install script, you can use the automated script:
+
+```bash
+bash ~/.time_awareness/scripts/uninstall.sh
+```
+
+This script deletes the app directory, removes the autostart entry, and deletes the application symlink.
+
+Alternatively, you can manually run these commands:
 
 1. **Delete the app directory:**
    ```bash
