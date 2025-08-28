@@ -48,28 +48,46 @@ Time Awareness is a productivity tool that tracks your computer usage sessions, 
       libgtk-3-bin \
       gir1.2-ayatanaappindicator3-0.1 \
       libayatana-appindicator3-dev \
-      dbus libdbus-glib-1-dev \
-      libgirepository1.0-dev libgirepository-2.0-dev gir1.2-glib-2.0 \
+      dbus \
+      libdbus-glib-1-dev \
+      libgirepository1.0-dev \
+      libgirepository-2.0-dev \
+      gir1.2-glib-2.0 \
       gobject-introspection
   ```
   - Required for tray icon, D-Bus idle detection, and PyGObject introspection.
 
-  **RHEL/CentOS/Fedora:**
+  **RHEL/CentOS/Fedora (GNOME required):**
+  > **Note:** You may need to enable the CRB repository first:
+  > ```bash
+  > sudo dnf config-manager --set-enabled crb
+  > sudo dnf makecache
+  > ```
   ```bash
-  sudo yum install -y \
+  sudo dnf install -y \
       python3-gobject \
-      cairo cairo-devel \
-      libffi-devel glib2-devel \
-      dbus dbus-glib-devel \
-      gobject-introspection gobject-introspection-devel \
-      libjpeg-turbo libjpeg-turbo-devel \
-      gnome-extensions
+      libayatana-appindicator3 \
+      libayatana-appindicator3-devel \
+      cairo \
+      cairo-devel \
+      cairo-gobject-devel \
+      libffi-devel \
+      glib2-devel \
+      dbus \
+      dbus-glib-devel \
+      gobject-introspection \
+      gobject-introspection-devel \
+      libjpeg-turbo \
+      libjpeg-turbo-devel \
+      gnome-shell \
+      gnome-extensions-app
   ```
   - Required for tray icon, D-Bus idle detection, PyGObject, and GNOME extension support.
 
   **Note:**  
   - For PyGObject > 3.50.1, you need `libgirepository-2.0-dev` (Debian/Ubuntu).  
   - For PyGObject <= 3.50.1, you need `libgirepository1.0-dev` (Debian/Ubuntu).
+  - On RHEL/CentOS/Fedora, GNOME desktop is required for tray icon support.
 
 ---
 
