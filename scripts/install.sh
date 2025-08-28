@@ -25,12 +25,6 @@ echo "Welcome to the Time Awareness installer."
 echo "This script will install required system and Python dependencies, clone the repository, and set up autostart."
 echo
 
-# Check for GNOME desktop environment
-if [[ "$XDG_CURRENT_DESKTOP" != *GNOME* ]]; then
-  echo "[ERROR] GNOME desktop environment is required to run this installer."
-  exit 1
-fi
-
 # Detect OS family (Debian/Ubuntu vs RHEL/CentOS)
 if command -v apt-get >/dev/null 2>&1; then
   echo -n "Step 1: Update package list and install required packages using apt-get (requires sudo, you may be asked for your password)."
@@ -53,6 +47,12 @@ if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get install -y "$pkg" >/dev/null 2>&1 && progress_bar 10 || { echo "[ERROR] Failed to install $pkg" > /dev/tty; exit 1; }
   done
 elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+  # Check for GNOME desktop environment
+  if [[ "$XDG_CURRENT_DESKTOP" != *GNOME* ]]; then
+    echo "[ERROR] GNOME desktop environment is required to run this installer."
+    exit 1
+  fi
+
   echo -n "Step 1: Install required packages using dnf (requires sudo, you may be asked for your password)."
   ask_proceed
   echo -n "Enabling CRB repository "
