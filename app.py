@@ -314,9 +314,9 @@ class TrayApp:
         """
         Show a dialog with session history and statistics.
         """
-        hist = self.ta.history(count_sessions=True)
-        logger.info("History dialog opened. Sessions: {}", hist['sessions'])
-        # Show a simple dialog with history summary
+        hist = self.ta.history()
+        logger.info("History dialog opened. Sessions: {}", len(hist['sessions']))
+
         msg = (
             f"Days tracked: {hist['days']}\n"
             f"Total today: {format_duration(hist['total_today'])}\n"
@@ -324,16 +324,35 @@ class TrayApp:
             f"7-day avg: {format_duration(hist['seven_day_average'])}\n"
             f"Weekday avg: {format_duration(hist['weekday_average'])}\n"
             f"Total avg: {format_duration(hist['total_average'])}\n"
-            f"Sessions: {hist['sessions']}"
+            f"Sessions: {len(hist['sessions'])}\n"
         )
-        dialog = Gtk.MessageDialog(
+
+        session_lines = []
+        for s in hist['sessions']:
+            start = format_time(s['start'])
+            end = format_time(s['end'])
+            dur = format_duration(s['duration'])
+            session_lines.append(f"{format_date(s['start'])} {start}–{end} ({dur})")
+        msg += "\n".join(session_lines) if session_lines else "No previous sessions."
+
+        dialog = Gtk.Dialog(
             transient_for=None,
             modal=True,
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
+            buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK),
             text="Session History"
         )
-        dialog.format_secondary_text(msg)
+        dialog.set_default_size(400, 300)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        textview = Gtk.TextView()
+        textview.set_editable(False)
+        textview.get_buffer().set_text(msg)
+        scrolled.add(textview)
+
+        box = dialog.get_content_area()
+        box.pack_start(scrolled, True, True, 0)
+        dialog.show_all()
         dialog.run()
         dialog.destroy()
 
