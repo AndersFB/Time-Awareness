@@ -339,7 +339,7 @@ class TrayApp:
             transient_for=None,
             modal=True,
             buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK),
-            text="Session History"
+            title="Session History"
         )
         dialog.set_default_size(400, 300)
 
