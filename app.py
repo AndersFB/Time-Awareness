@@ -338,9 +338,9 @@ class TrayApp:
         dialog = Gtk.Dialog(
             title="Session History",
             transient_for=None,
-            modal=True,
-            buttons=Gtk.ButtonsType.OK
+            modal=True
         )
+        dialog.add_button(Gtk.STOCK_OK, Gtk.ResponseType.OK)
         dialog.set_default_size(400, 300)
 
         scrolled = Gtk.ScrolledWindow()
