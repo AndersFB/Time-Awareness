@@ -31,10 +31,10 @@ def configure_database(database: Path):
     Returns:
         SqliteDatabase: The configured database instance.
     """
-    logger.info(f"Configuring database: {database}")
+    logger.info("Configuring database: {}", database)
     db = SqliteDatabase(database.as_posix(), autoconnect=False)
     database_proxy.initialize(db)
-    logger.info(f"Database configured successfully: {db}")
+    logger.info("Database configured successfully: {}", database)
     return db
 
 def with_database(func):
@@ -300,3 +300,13 @@ def get_days_tracked():
     except Exception as e:
         logger.error("Failed to fetch days tracked: {}", e)
         return 0
+
+def reset_database():
+    """
+    Delete all sessions and metadata from the database.
+    """
+    db = database_proxy.obj
+    with db.atomic():
+        Session.delete().execute()
+        MetaData.delete().execute()
+    logger.debug("Database reset: all sessions and metadata deleted")

@@ -86,5 +86,14 @@ def live(interval: float = 1.0):
     except KeyboardInterrupt:
         typer.echo("\nLive session display stopped.")
 
+@app.command()
+def reset():
+    """Reset the database (delete all sessions and metadata)."""
+    if typer.confirm("Are you sure you want to reset all time awareness data? This cannot be undone."):
+        get_ta().reset()
+        typer.echo("Database has been reset.")
+    else:
+        typer.echo("Reset cancelled.")
+
 if __name__ == "__main__":
     app()

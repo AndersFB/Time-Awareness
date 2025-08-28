@@ -1,5 +1,3 @@
-
-
 import datetime
 import subprocess
 import time
@@ -21,7 +19,8 @@ from database import (
     save_session, get_sessions,
     set_metadata, get_metadata, get_sessions_since, get_sessions_by_weekday,
     get_all_sessions, get_sessions_for_day, get_previous_session, get_days_tracked, configure_database,
-    create_tables_if_not_exist
+    create_tables_if_not_exist,
+    reset_database
 )
 
 class TimeAwareness:
@@ -548,3 +547,13 @@ class TimeAwareness:
         except Exception:
             logger.warning("Could not subscribe to logind PrepareForSleep; using elapsed-gap detection.")
 
+    def reset(self):
+        """
+        Empties the database (all sessions and metadata).
+        """
+        reset_database()
+        self.today_total = 0
+        self.current_session = None
+        self._last_update_date = datetime.date.today()
+        self.save_state()
+        logger.info("Database reset: all data cleared.")
