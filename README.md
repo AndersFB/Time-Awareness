@@ -83,7 +83,7 @@ The application uses **GNOME's IdleMonitor** via **D-Bus** to detect inactivity.
 Run this command to automatically install all dependencies, clone the project into `~/.time_awareness`, create a virtual environment, install Python packages, and set up autostart:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/AndersFB/Time-Awareness/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/AndersFB/Time-Awareness/main/scripts/install.sh | bash
 ```
 
 This will:

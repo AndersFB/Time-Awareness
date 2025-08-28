@@ -111,13 +111,14 @@ fi
 echo -n "Installing Python dependencies from $PIP_REQUIREMENTS_FILE "
 pip install -U -r "$PIP_REQUIREMENTS_FILE" >/dev/null 2>&1 && progress_bar 10
 
-AUTOSTART_DIR="$HOME/.config/autostart"
-AUTOSTART_DESKTOP_ENTRY="$AUTOSTART_DIR/time_awareness.desktop"
+AUTOSTART_DESKTOP_ENTRY="$HOME/.config/autostart/time_awareness.desktop"
+APPLICATIONS_DESKTOP_ENTRY="$HOME/.local/share/applications/time_awareness.desktop"
 
 echo "Step 5: Create autostart entry and launch the app."
 ask_proceed
 if [ ! -f "$AUTOSTART_DESKTOP_ENTRY" ]; then
-  mkdir -p "$AUTOSTART_DIR"
+  echo "Creating autostart entry at $AUTOSTART_DESKTOP_ENTRY"
+  mkdir -p "$(dirname "$AUTOSTART_DESKTOP_ENTRY")"
   cat > "$AUTOSTART_DESKTOP_ENTRY" <<EOL
 [Desktop Entry]
 Type=Application
@@ -131,8 +132,10 @@ EOL
   chmod +x "$AUTOSTART_DESKTOP_ENTRY"
 fi
 
-if [ ! -f "$HOME/.local/share/applications/time_awareness.desktop" ]; then
-  ln -sf "$AUTOSTART_DESKTOP_ENTRY" "$HOME/.local/share/applications/time_awareness.desktop"
+if [ ! -f "$APPLICATIONS_DESKTOP_ENTRY" ]; then
+  echo "Creating application desktop entry at $APPLICATIONS_DESKTOP_ENTRY"
+  mkdir -p "$(dirname "$APPLICATIONS_DESKTOP_ENTRY")"
+  ln -sf "$AUTOSTART_DESKTOP_ENTRY" "$APPLICATIONS_DESKTOP_ENTRY"
 fi
 
 echo -n "Launching the app "
@@ -140,3 +143,4 @@ ask_proceed
 gtk-launch time_awareness >/dev/null 2>&1 && progress_bar 10
 
 echo "Installation completed. The app will start automatically on next login. You can now close this terminal."
+echo "You can uninstall the app by running the uninstall.sh script located in $INSTALL_DIR/scripts."
