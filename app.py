@@ -342,8 +342,6 @@ class TrayApp:
             buttons=(Gtk.STOCK_OK, Gtk.ResponseType.OK)
         )
         dialog.set_default_size(400, 300)
-        dialog.set_keep_above(True)
-        dialog.present()
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -354,6 +352,10 @@ class TrayApp:
 
         box = dialog.get_content_area()
         box.pack_start(scrolled, True, True, 0)
+        dialog.set_type_hint(Gtk.WindowTypeHint.DIALOG)
+        dialog.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
+        dialog.set_keep_above(True)
+        dialog.present()
         dialog.show_all()
         dialog.run()
         dialog.destroy()
