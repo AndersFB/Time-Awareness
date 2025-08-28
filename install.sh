@@ -3,9 +3,13 @@ set -e
 
 function ask_proceed() {
   read -p "Proceed? [Y/n]: " -r answer
-  if [[ "$answer" =~ ^[Nn]$ ]]; then
+  if [[ -z "$answer" || "$answer" =~ ^[Yy]$ ]]; then
+    return 0
+  elif [[ "$answer" =~ ^[Nn]$ ]]; then
     echo "Aborted."
     exit 1
+  else
+    ask_proceed
   fi
 }
 
