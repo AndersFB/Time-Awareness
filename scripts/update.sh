@@ -49,7 +49,7 @@ git pull origin main >/dev/null 2>&1 && progress_bar 10 || { echo " failed\n\n[E
 echo "Update complete."
 
 echo -n "Restarting the app "
-pkill -f time_awareness || true && sleep 1 && gtk-launch time_awareness >/dev/null 2>&1 && progress_bar 5 || { echo " failed\n\n[ERROR] Failed to restart the app" > /dev/tty; exit 1; }
+pkill -f time_awareness || true && sleep 3 && gtk-launch time_awareness >/dev/null 2>&1 && progress_bar 5 || { echo " failed\n\n[ERROR] Failed to restart the app" > /dev/tty; exit 1; }
 
 echo
 echo "Updating completed. You can now close this terminal."
