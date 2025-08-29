@@ -31,6 +31,9 @@ echo
 echo -n "Confirm uninstallation."
 ask_proceed
 
+echo -n "Closing the app "
+pkill -f time_awareness || true && sleep 3 >/dev/null 2>&1 && progress_bar 5 || { echo " failed\n\n[ERROR] Failed to close the app" > /dev/tty; exit 1; }
+
 echo -n "Removing application files in $APP_DIR "
 rm -rf "$APP_DIR" >/dev/null 2>&1 && progress_bar 5 || { echo " failed\n\n[ERROR] Failed to remove application files" > /dev/tty; exit 1; }
 echo -n "Removing autostart entry $AUTOSTART_DESKTOP_ENTRY "
