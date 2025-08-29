@@ -32,10 +32,10 @@ echo -n "Confirm uninstallation."
 ask_proceed
 
 echo -n "Removing application files in $APP_DIR "
-rm -rf "$APP_DIR" >/dev/null 2>&1 && progress_bar 5
+rm -rf "$APP_DIR" >/dev/null 2>&1 && progress_bar 5 || { echo " failed\n\n[ERROR] Failed to remove application files" > /dev/tty; exit 1; }
 echo -n "Removing autostart entry $AUTOSTART_DESKTOP_ENTRY "
-rm -f "$AUTOSTART_DESKTOP_ENTRY" >/dev/null 2>&1 && progress_bar 5
+rm -f "$AUTOSTART_DESKTOP_ENTRY" >/dev/null 2>&1 && progress_bar 5 || { echo " failed\n\n[ERROR] Failed to remove autostart entry" > /dev/tty; exit 1; }
 echo -n "Removing applications menu entry $APPLICATIONS_DESKTOP_ENTRY "
-rm -f "$APPLICATIONS_DESKTOP_ENTRY" >/dev/null 2>&1 && progress_bar 5
+rm -f "$APPLICATIONS_DESKTOP_ENTRY" >/dev/null 2>&1 && progress_bar 5 || { echo " failed\n\n[ERROR] Failed to remove applications menu entry" > /dev/tty; exit 1; }
 
 echo "Uninstallation complete."

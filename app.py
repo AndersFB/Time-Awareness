@@ -43,6 +43,8 @@ class TrayApp:
         if not self.tmp_icon_dir.exists():
             self.tmp_icon_dir.mkdir(parents=True)
 
+        self.colorize_icon = False
+
         self.ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
         logger.info("Initializing TrayApp.")
 
@@ -57,7 +59,7 @@ class TrayApp:
 
         self.update_icon()
 
-        GLib.timeout_add_seconds(update_app_interval, self.refresh)  # update every refresh_icon second
+        GLib.timeout_add_seconds(update_app_interval, self.refresh)  # update every update_app_interval second
         logger.info("TrayApp initialized.")
 
     def build_menu(self):
@@ -224,13 +226,16 @@ class TrayApp:
         # Determine fill percentage (1 hour = full circle, 1.5 hour = half circle etc.)
         fill_fraction = min((total_minutes % 60.0) / 60.0, 1.0)  # Max 1.0 (100%)
 
-        # Determine color based on time
-        if total_minutes < 60:
-            fill_color = (0, 122, 255, 255)  # Blue
-        elif total_minutes < 120:
-            fill_color = (128, 0, 128, 255)  # Purple
+        if self.colorize_icon:
+            # Determine color based on time
+            if total_minutes < 60:
+                fill_color = (0, 122, 255, 255)  # Blue
+            elif total_minutes < 120:
+                fill_color = (128, 0, 128, 255)  # Purple
+            else:
+                fill_color = (255, 0, 0, 255)  # Red
         else:
-            fill_color = (255, 0, 0, 255)  # Red
+            fill_color = (200, 200, 200, 255)
 
         # Icon size
         size = 128
@@ -244,7 +249,7 @@ class TrayApp:
         # Draw outer white circle (thicker than border)
         outer_padding = padding - 4  # slightly outside
         outer_bbox = [outer_padding, outer_padding, size - outer_padding, size - outer_padding]
-        draw.ellipse(outer_bbox, outline=(255, 255, 255, 255), width=6)
+        draw.ellipse(outer_bbox, outline=(200, 200, 200, 255), width=6)
 
         # Draw main grey border
         draw.ellipse(bbox, outline=(200, 200, 200, 255), width=8)
@@ -270,9 +275,10 @@ class TrayApp:
         else:
             duration = datetime.timedelta(seconds=0)
 
+        icon_change_minutes = 180 if self.colorize_icon else 60
         total_minutes = duration.total_seconds() / 60
-        if total_minutes > 180:
-            # The icon will not change after 180 minutes
+        if total_minutes > icon_change_minutes:
+            # The icon will not change after icon_change_minutes minutes
             return
 
         current_icon_file = self.render_icon(duration)

@@ -34,9 +34,9 @@ fi
 echo -n "Confirm update."
 ask_proceed
 
-cd "$APP_DIR" || { echo "[ERROR] Failed to access application directory $APP_DIR" > /dev/tty; exit 1; }
+cd "$APP_DIR" || { echo "\n[ERROR] Failed to access application directory $APP_DIR" > /dev/tty; exit 1; }
 echo -n "Fetching latest changes from repository "
-git fetch origin >/dev/null 2>&1 && progress_bar 10 || { echo "[ERROR] Failed to fetch updates from repository" > /dev/tty; exit 1; }
+git fetch origin >/dev/null 2>&1 && progress_bar 10 || { echo " failed\n\n[ERROR] Failed to fetch updates from repository" > /dev/tty; exit 1; }
 LOCAL=$(git rev-parse @)
 REMOTE=$(git rev-parse @{u})
 if [ "$LOCAL" = "$REMOTE" ]; then
@@ -45,11 +45,11 @@ if [ "$LOCAL" = "$REMOTE" ]; then
 fi
 
 echo -n "Merging latest changes "
-git pull origin main >/dev/null 2>&1 && progress_bar 10 || { echo "[ERROR] Failed to merge updates" > /dev/tty; exit 1; }
+git pull origin main >/dev/null 2>&1 && progress_bar 10 || { echo " failed\n\n[ERROR] Failed to merge updates" > /dev/tty; exit 1; }
 echo "Update complete."
 
 echo -n "Restarting the app "
-pkill -f time_awareness || true && sleep 1 && gtk-launch time_awareness >/dev/null 2>&1 && progress_bar 5 || { echo "[ERROR] Failed to restart the app" > /dev/tty; exit 1; }
+pkill -f time_awareness || true && sleep 1 && gtk-launch time_awareness >/dev/null 2>&1 && progress_bar 5 || { echo " failed\n\n[ERROR] Failed to restart the app" > /dev/tty; exit 1; }
 
 echo
 echo "Updating completed. You can now close this terminal."
