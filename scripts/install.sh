@@ -113,14 +113,12 @@ ask_proceed
 
 INSTALL_DIR="$HOME/.time_awareness/src"
 if [ -d "$INSTALL_DIR" ]; then
-  echo -n "Updating existing installation at $INSTALL_DIR "
   cd "$INSTALL_DIR" || { printf "\nFailed to change directory to $INSTALL_DIR\n" > /dev/tty; exit 1; }
   git pull >/dev/null 2>&1 &
-  spinner $! "Pulling latest changes"
+  spinner $! "Pulling latest changes at $INSTALL_DIR"
 else
-  echo -n "Cloning repository to $INSTALL_DIR "
   git clone https://github.com/AndersFB/Time-Awareness.git "$INSTALL_DIR" >/dev/null 2>&1 &
-  spinner $! "Cloning repository"
+  spinner $! "Cloning repository to $INSTALL_DIR"
 
   cd "$INSTALL_DIR" || { printf "\nFailed to change directory to $INSTALL_DIR\n" > /dev/tty; exit 1; }
 
