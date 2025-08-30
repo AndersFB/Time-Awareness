@@ -4,21 +4,37 @@ set -e
 function ask_proceed() {
   echo -n " Proceed? [Y/n]: " > /dev/tty
   read -r answer < /dev/tty
+
   if [[ "$answer" =~ ^[Nn]$ ]]; then
     echo "Aborted." > /dev/tty
     exit 1
   fi
 }
 
-function progress_bar() {
-  local total=$1
-  local current=0
-  while [ $current -lt $total ]; do
-    echo -n "."
-    sleep 0.2
-    current=$((current + 1))
+spinner() {
+  local pid=$1         # PID of the background job
+  local message="$2"   # message to display
+  local delay=0.1
+  local spin='|/-\'
+  local i=0
+
+  while kill -0 "$pid" 2>/dev/null; do
+    printf "\r[%c] %s" "${spin:i++%${#spin}:1}" "$message"
+    sleep $delay
   done
-  echo " done"
+
+  # when finished
+  wait $pid
+  local exit_code=$?
+
+  if [ $exit_code -eq 0 ]; then
+    printf "\r[✔] %s\n" "$message"
+  else
+    printf "\r[✖] %s (failed)\n" "$message"
+    exit 1
+  fi
+
+  return $exit_code
 }
 
 echo "Welcome to the Time Awareness updater."
@@ -27,16 +43,17 @@ echo
 
 APP_DIR="$HOME/.time_awareness/src"
 if [ ! -d "$APP_DIR" ]; then
-  echo "[ERROR] Application directory $APP_DIR does not exist. Please run the installer first." > /dev/tty
+  echo "Application directory $APP_DIR does not exist. Please run the installer first." > /dev/tty
   exit 1
 fi
 
 echo -n "Confirm update."
 ask_proceed
 
-cd "$APP_DIR" || { printf "\n[ERROR] Failed to access application directory $APP_DIR\n" > /dev/tty; exit 1; }
-echo -n "Fetching latest changes from repository "
-git fetch origin >/dev/null 2>&1 && progress_bar 10 || { printf " failed\n\n[ERROR] Failed to fetch updates from repository\n" > /dev/tty; exit 1; }
+cd "$APP_DIR" || { printf "\nFailed to access application directory $APP_DIR\n" > /dev/tty; exit 1; }
+git fetch origin >/dev/null 2>&1 &
+spinner $! "Fetching latest changes from repository"
+
 LOCAL=$(git rev-parse @)
 REMOTE=$(git rev-parse @{u})
 if [ "$LOCAL" = "$REMOTE" ]; then
@@ -44,12 +61,11 @@ if [ "$LOCAL" = "$REMOTE" ]; then
   exit 0
 fi
 
-echo -n "Merging latest changes "
-git pull origin main >/dev/null 2>&1 && progress_bar 10 || { printf " failed\n\n[ERROR] Failed to merge updates\n" > /dev/tty; exit 1; }
-echo "Update complete."
+git pull origin main >/dev/null 2>&1 &
+spinner $! "Merging latest changes"
 
-echo -n "Restarting the app "
-pkill -f time_awareness || true && sleep 3 && gtk-launch time_awareness >/dev/null 2>&1 && progress_bar 5 || { printf " failed\n\n[ERROR] Failed to restart the app\n" > /dev/tty; exit 1; }
+pkill -f time_awareness || true && sleep 3 && gtk-launch time_awareness >/dev/null 2>&1 &
+spinner $! "Restarting the application"
 
 echo
 echo "Updating completed. You can now close this terminal."
