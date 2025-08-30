@@ -103,7 +103,7 @@ else
     EXT_STATUS=$(gnome-extensions info appindicatorsupport@rgcjonas.gmail.com 2>/dev/null | grep -F 'Enabled:' | awk '{print $2}')
     if [ "$EXT_STATUS" != "Yes" ]; then
       echo -n "Installing appindicator GNOME extension "
-      gnome-extensions install "$INSTALL_DIR/lib/appindicatorsupportrgcjonas.gmail.com.v60.shell-extension.zip" >/dev/null 2>&1 && progress_bar 10 || { printf " failed\n\n[ERROR] Failed to install appindicator GNOME extension\n" > /dev/tty; exit 1; }
+      gnome-extensions install "$INSTALL_DIR/libs/appindicatorsupportrgcjonas.gmail.com.v60.shell-extension.zip" >/dev/null 2>&1 && progress_bar 10 || { printf " failed\n\n[ERROR] Failed to install appindicator GNOME extension\n" > /dev/tty; exit 1; }
       echo "[NOTICE] Before you can enable the extension you may need to log out and log back in again or restart you computer."
       echo -n "Enabling appindicator GNOME extension "
       gnome-extensions enable "appindicatorsupport@rgcjonas.gmail.com" >/dev/null 2>&1 && progress_bar 5 || { printf " failed\n\n[ERROR] Failed to enable appindicator GNOME extension\n" > /dev/tty; }
