@@ -120,7 +120,21 @@ This will:
     pip install -r requirements.txt
     ```
 
-4. Launch the tray app
+4. **If you are on RHEL/CentOS/Fedora (GNOME):**
+
+    - Install the AppIndicator GNOME extension from the provided zip file:
+      ```bash
+      gnome-extensions install libs/appindicatorsupportrgcjonas.gmail.com.v60.shell-extension.zip
+      ```
+    - **Log out and log in again.**
+    - Enable the extension:
+      ```bash
+      gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com
+      ```
+    - **Log out and log in again.**
+    - _The tray icon will not work unless this extension is installed and enabled._
+
+5. Launch the tray app
     ```bash
     gtk-launch time_awareness
     ```
