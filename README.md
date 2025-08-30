@@ -156,7 +156,7 @@ bash ~/.time_awareness/scripts/update.sh
 
 Use this script whenever you want to upgrade to the newest release without reinstalling.
 
-## 🚀 Setting Up Autostart on Ubuntu
+## 🚀 Setting Up Autostart
 
 If you did not use the automatic installer, you can set up autostart manually:
 
