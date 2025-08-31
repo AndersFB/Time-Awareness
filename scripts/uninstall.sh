@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -e
 
 function ask_proceed() {
   echo -n " Proceed? [Y/n]: " > /dev/tty
