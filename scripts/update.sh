@@ -46,8 +46,20 @@ if [ ! -d "$APP_DIR" ]; then
   exit 1
 fi
 
-echo -n "Confirm update."
-ask_proceed
+# Check for --yes argument
+SKIP_CONFIRM=false
+for arg in "$@"; do
+  if [ "$arg" == "--yes" ]; then
+    SKIP_CONFIRM=true
+    break
+  fi
+done
+
+if [ "$SKIP_CONFIRM" = false ]; then
+  echo -n "Confirm update. "
+  ask_proceed
+  echo
+fi
 
 cd "$APP_DIR" || { printf "\nFailed to access application directory $APP_DIR\n" > /dev/tty; exit 1; }
 git fetch origin >/dev/null 2>&1 &

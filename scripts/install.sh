@@ -40,6 +40,21 @@ echo "Welcome to the Time Awareness installer."
 echo "This script will install required system and Python dependencies, clone the repository, and set up autostart."
 echo
 
+# Check for --yes argument
+SKIP_CONFIRM=false
+for arg in "$@"; do
+  if [ "$arg" == "--yes" ]; then
+    SKIP_CONFIRM=true
+    break
+  fi
+done
+
+if [ "$SKIP_CONFIRM" = false ]; then
+  echo -n "Confirm installation."
+  ask_proceed
+  echo
+fi
+
 # Detect OS family (Debian/Ubuntu vs RHEL/CentOS)
 if command -v apt-get >/dev/null 2>&1; then
   echo -n "Step 1: Update package list and install required packages using apt-get (requires sudo, you may be asked for your password)."

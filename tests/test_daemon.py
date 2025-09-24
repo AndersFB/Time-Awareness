@@ -1,77 +1,186 @@
-import pytest
-import threading
-import time
 import datetime
+import pytest
 
-from time_awareness import TimeAwareness
+import time_awareness
 
-@pytest.fixture(autouse=True)
-def use_in_memory_db(use_in_memory_db):
-    pass
 
 @pytest.fixture
-def ta(tmp_path):
-    return TimeAwareness(app_dir=tmp_path, log_to_terminal=True)
+def session_manager(use_in_memory_db):
+    return time_awareness.SessionManager()
 
-def test_run_daemon_starts_and_ends_session(monkeypatch, ta):
-    # Simulate idle time: first active, then idle
-    idle_times = [0, 0, 600_000, 600_000]  # ms (0 ms active, 600_000 ms idle)
-    def fake_get_idle_time():
-        # Return next idle time in seconds
-        if idle_times:
-            ms = idle_times.pop(0)
-            return ta.end_session_idle_threshold if ms >= 600_000 else datetime.timedelta(seconds=0)
-        return datetime.timedelta(seconds=0)
-    monkeypatch.setattr(ta, "get_idle_time", fake_get_idle_time)
 
-    # Run daemon in a thread, stop after a short time
-    def run_and_stop():
-        ta.run_daemon(poll_interval=0.01)
-    t = threading.Thread(target=run_and_stop)
-    t.start()
-    time.sleep(0.05)
-    ta.quit_daemon()
-    t.join()
+@pytest.fixture
+def fake_monitor():
+    """Fake SystemMonitor with controllable attributes."""
+    class FakeMonitor:
+        def __init__(self):
+            self.screen_locked = False
+            self._uptime = 1000
+            self._idle_time = datetime.timedelta(seconds=0)
+            self.subscribe_lock_called = False
+            self.subscribe_sleep_called = False
 
-    assert ta.current_session is None
+        def get_system_uptime(self):
+            return self._uptime
 
-def test_daemon_does_not_start_session_if_active(monkeypatch, ta):
-    ta.current_session = datetime.datetime.now()
-    monkeypatch.setattr(ta, "get_idle_time", lambda: datetime.timedelta(seconds=0))
-    # Should not start a new session if already active
-    ta._daemon_stop_event.set()
-    ta.run_daemon(poll_interval=0.01)
-    # Session should remain unchanged
-    assert ta.current_session is not None
+        def get_idle_time(self):
+            return self._idle_time
 
-def test_daemon_does_not_end_session_if_inactive(monkeypatch, ta):
-    ta.current_session = None
-    monkeypatch.setattr(ta, "get_idle_time", lambda: ta.end_session_idle_threshold)
-    ta._daemon_stop_event.set()
-    ta.run_daemon(poll_interval=0.01)
-    # Session should remain None
-    assert ta.current_session is not None
+        def subscribe_lock_events(self, handler=None):
+            self.subscribe_lock_called = True
+            return False
 
-def test_daemon_handles_get_idle_time_exception(monkeypatch, ta):
-    monkeypatch.setattr(ta, "get_idle_time", lambda: (_ for _ in ()).throw(Exception("fail")))
-    ta._daemon_stop_event.set()
-    # Should not raise, just log error
-    ta.run_daemon(poll_interval=0.01)
-    assert ta.current_session is not None
+        def subscribe_sleep_events(self):
+            self.subscribe_sleep_called = True
+            return None
 
-def test_daemon_repeated_start_stop(monkeypatch, ta):
-    idle_times = [0, 600_000, 0, 600_000]
-    def fake_get_idle_time():
-        if idle_times:
-            ms = idle_times.pop(0)
-            return ta.end_session_idle_threshold if ms >= 600_000 else datetime.timedelta(seconds=0)
-        return datetime.timedelta(seconds=0)
-    monkeypatch.setattr(ta, "get_idle_time", fake_get_idle_time)
-    def run_and_stop():
-        ta.run_daemon(poll_interval=0.01)
-    t = threading.Thread(target=run_and_stop)
-    t.start()
-    time.sleep(0.1)
-    ta.quit_daemon()
-    t.join()
-    assert ta.current_session is None
+    return FakeMonitor()
+
+
+@pytest.fixture
+def daemon(session_manager, fake_monitor, monkeypatch):
+    d = time_awareness.Daemon(session_manager, fake_monitor)
+    # prevent actual sleeping
+    monkeypatch.setattr(time_awareness.time, "sleep", lambda _: None)
+    return d
+
+
+# ------------------------------
+# run startup behavior
+# ------------------------------
+def test_run_starts_session_on_fresh_boot(daemon, fake_monitor):
+    fake_monitor._uptime = 10  # below boot_detection_limit
+    fake_monitor._idle_time = datetime.timedelta(minutes=20)  # prevent restart
+    daemon._daemon_stop_event.set()
+    daemon.run(poll_interval=0.1, sleep_detection_threshold=1.0)
+    assert daemon._session_manager.current_session is not None
+
+
+def test_run_starts_session_when_none(daemon, fake_monitor):
+    fake_monitor._uptime = 200  # above boot_detection_limit
+    fake_monitor._idle_time = datetime.timedelta(minutes=20)
+    daemon._session_manager.current_session = None
+    daemon._daemon_stop_event.set()
+    daemon.run(poll_interval=0.1, sleep_detection_threshold=1.0)
+    assert daemon._session_manager.current_session is not None
+
+
+def test_run_subscribes_lock_and_sleep(daemon, fake_monitor):
+    fake_monitor._idle_time = datetime.timedelta(minutes=20)
+    daemon._daemon_stop_event.set()
+    daemon.run(poll_interval=0.1, sleep_detection_threshold=1.0)
+    assert fake_monitor.subscribe_lock_called
+    assert fake_monitor.subscribe_sleep_called
+
+
+# ------------------------------
+# sleep detection
+# ------------------------------
+def test_detects_sleep_and_ends_session(daemon, fake_monitor):
+    daemon._is_active = True
+    daemon._session_manager.start_session()
+    daemon._last_check = datetime.datetime.now() - datetime.timedelta(seconds=60)
+    fake_monitor._idle_time = datetime.timedelta(minutes=20)  # ensure no restart
+
+    def fake_is_set():
+        if not hasattr(fake_is_set, "called"):
+            fake_is_set.called = True
+            return False
+        return True
+
+    daemon._daemon_stop_event.is_set = fake_is_set
+    daemon.run(poll_interval=0.1, sleep_detection_threshold=5.0)
+
+    assert daemon._session_manager.current_session is None
+    assert not daemon._is_active
+
+
+# ------------------------------
+# reboot detection
+# ------------------------------
+def test_detects_reboot_and_ends_session(daemon, fake_monitor):
+    daemon._is_active = True
+    daemon._end_session_on_restart = True
+    daemon._session_manager.start_session()
+    fake_monitor._idle_time = datetime.timedelta(minutes=20)
+
+    uptimes = [200, 50]  # decreasing => reboot
+    fake_monitor.get_system_uptime = lambda: uptimes.pop(0)
+
+    def fake_is_set():
+        if not hasattr(fake_is_set, "called"):
+            fake_is_set.called = True
+            return False
+        return True
+
+    daemon._daemon_stop_event.is_set = fake_is_set
+    daemon.run(poll_interval=0.1, sleep_detection_threshold=100.0)
+
+    assert daemon._session_manager.current_session is None
+
+
+# ------------------------------
+# idle detection
+# ------------------------------
+def test_session_ends_on_idle_threshold(daemon, fake_monitor):
+    daemon._is_active = True
+    daemon._session_manager.start_session()
+    fake_monitor._idle_time = datetime.timedelta(minutes=20)
+    daemon._end_session_idle_threshold = datetime.timedelta(minutes=10)
+
+    def fake_is_set():
+        if not hasattr(fake_is_set, "called"):
+            fake_is_set.called = True
+            return False
+        return True
+
+    daemon._daemon_stop_event.is_set = fake_is_set
+    daemon.run(poll_interval=0.1, sleep_detection_threshold=100.0)
+
+    assert daemon._session_manager.current_session is None
+    assert not daemon._is_active
+
+
+def test_session_starts_when_user_active(daemon, fake_monitor):
+    daemon._is_active = False
+    daemon._session_manager.current_session = None
+    fake_monitor._idle_time = datetime.timedelta(seconds=5)
+    daemon._end_session_idle_threshold = datetime.timedelta(minutes=10)
+
+    def fake_is_set():
+        if not hasattr(fake_is_set, "called"):
+            fake_is_set.called = True
+            return False
+        return True
+
+    daemon._daemon_stop_event.is_set = fake_is_set
+    daemon.run(poll_interval=0.1, sleep_detection_threshold=100.0)
+
+    assert daemon._session_manager.current_session is not None
+    assert daemon._is_active
+
+
+# ------------------------------
+# stop()
+# ------------------------------
+def test_stop_cleans_up(daemon, fake_monitor):
+    daemon._is_active = True
+    daemon._session_manager.start_session()
+    fake_monitor._idle_time = datetime.timedelta(minutes=20)
+    daemon.stop()
+    assert not daemon._is_active or daemon._session_manager.current_session is None
+
+
+# ------------------------------
+# new helper methods
+# ------------------------------
+def test_is_fresh_boot_detects_true(monkeypatch, daemon):
+    # force no last_seen_time in metadata
+    monkeypatch.setattr(time_awareness, "get_metadata", lambda *a, **kw: "")
+    assert daemon._is_fresh_boot(uptime=5)
+
+
+def test_is_fresh_boot_detects_false_recent(monkeypatch, daemon):
+    recent = (datetime.datetime.now() - datetime.timedelta(minutes=1)).isoformat()
+    monkeypatch.setattr(time_awareness, "get_metadata", lambda *a, **kw: recent)
+    assert not daemon._is_fresh_boot(uptime=5)

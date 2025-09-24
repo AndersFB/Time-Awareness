@@ -39,23 +39,20 @@ class TrayApp:
         """
         Initialize the tray application, indicator, and menu.
         """
-        self.tmp_icon_dir = Path("/tmp/time_awareness/")
-        if not self.tmp_icon_dir.exists():
-            self.tmp_icon_dir.mkdir(parents=True)
+        self._tmp_icon_dir = Path("/tmp/time_awareness/")
+        if not self._tmp_icon_dir.exists():
+            self._tmp_icon_dir.mkdir(parents=True)
 
-        self.colorize_icon = False
+        self._ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
 
-        self.ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
         logger.info("Initializing TrayApp.")
-
-        self.indicator = AppIndicator3.Indicator.new(
-            APP_ID, "", AppIndicator3.IndicatorCategory.APPLICATION_STATUS
-        )
+        self.indicator = AppIndicator3.Indicator.new(APP_ID, "", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
         self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
-        self.menu = Gtk.Menu()
-        self.menu_items = {}
+
+        self._menu = Gtk.Menu()
+        self._menu_items = {}
         self.build_menu()
-        self.indicator.set_menu(self.menu)
+        self.indicator.set_menu(self._menu)
 
         self.update_icon()
 
@@ -66,7 +63,7 @@ class TrayApp:
         """
         Build the tray menu with session info, controls, and history.
         """
-        self.menu.foreach(lambda widget: self.menu.remove(widget))
+        self._menu.foreach(lambda widget: self._menu.remove(widget))
 
         # Current session (dimmed/grey)
         label_current = Gtk.Label()
@@ -74,9 +71,9 @@ class TrayApp:
         item_current = Gtk.MenuItem()
         item_current.add(label_current)
         item_current.set_sensitive(False)
-        self.menu.append(item_current)
+        self._menu.append(item_current)
 
-        session_info = self.ta.current_session_info()
+        session_info = self._ta.current_session_info()
         if session_info is not None:
             start, now, duration = session_info
             started_dur_label = format_duration(duration)
@@ -87,16 +84,16 @@ class TrayApp:
 
         item_started_dur = Gtk.MenuItem(label=started_dur_label)
         item_started_dur.set_sensitive(False)
-        self.menu.append(item_started_dur)
-        self.menu_items["current_session_dur"] = item_started_dur
+        self._menu.append(item_started_dur)
+        self._menu_items["current_session_dur"] = item_started_dur
 
         item_started = Gtk.MenuItem(label=started_date_label)
         item_started.set_sensitive(False)
-        self.menu.append(item_started)
-        self.menu_items["current_session_date"] = item_started
+        self._menu.append(item_started)
+        self._menu_items["current_session_date"] = item_started
 
         # Separator
-        self.menu.append(Gtk.SeparatorMenuItem())
+        self._menu.append(Gtk.SeparatorMenuItem())
 
         # Total today (dimmed/grey)
         label_total_today = Gtk.Label()
@@ -104,16 +101,16 @@ class TrayApp:
         item_total_today = Gtk.MenuItem()
         item_total_today.add(label_total_today)
         item_total_today.set_sensitive(False)
-        self.menu.append(item_total_today)
+        self._menu.append(item_total_today)
 
-        total_today_label = format_duration(self.ta.total_time_today())
+        total_today_label = format_duration(self._ta.total_time_today())
         item_total_today_value = Gtk.MenuItem(label=total_today_label)
         item_total_today_value.set_sensitive(False)
-        self.menu.append(item_total_today_value)
-        self.menu_items["total_today"] = item_total_today_value
+        self._menu.append(item_total_today_value)
+        self._menu_items["total_today"] = item_total_today_value
 
         # Separator
-        self.menu.append(Gtk.SeparatorMenuItem())
+        self._menu.append(Gtk.SeparatorMenuItem())
 
         # Previous session (dimmed/grey)
         label_prev = Gtk.Label()
@@ -121,9 +118,9 @@ class TrayApp:
         item_prev = Gtk.MenuItem()
         item_prev.add(label_prev)
         item_prev.set_sensitive(False)
-        self.menu.append(item_prev)
+        self._menu.append(item_prev)
 
-        previous_session_info = self.ta.previous_session()
+        previous_session_info = self._ta.previous_session()
         if previous_session_info is not None:
             prev_start, prev_end, prev_duration = previous_session_info
             prev_dur_label = format_duration(prev_duration)
@@ -134,52 +131,52 @@ class TrayApp:
 
         item_prev_dur = Gtk.MenuItem(label=prev_dur_label)
         item_prev_dur.set_sensitive(False)
-        self.menu.append(item_prev_dur)
-        self.menu_items["prev_dur"] = item_prev_dur
+        self._menu.append(item_prev_dur)
+        self._menu_items["prev_dur"] = item_prev_dur
 
         item_prev_date = Gtk.MenuItem(label=prev_date_label)
         item_prev_date.set_sensitive(False)
-        self.menu.append(item_prev_date)
-        self.menu_items["prev_date"] = item_prev_date
+        self._menu.append(item_prev_date)
+        self._menu_items["prev_date"] = item_prev_date
 
         # Separator
-        self.menu.append(Gtk.SeparatorMenuItem())
+        self._menu.append(Gtk.SeparatorMenuItem())
 
         # Disable
         item_disable = Gtk.MenuItem(label="Disable")
         item_disable.connect("activate", self.on_disable)
-        self.menu.append(item_disable)
+        self._menu.append(item_disable)
 
         # New session
         item_new = Gtk.MenuItem(label="New session")
         item_new.connect("activate", self.on_new_session)
-        self.menu.append(item_new)
+        self._menu.append(item_new)
 
         # History
         item_history = Gtk.MenuItem(label="History")
         item_history.connect("activate", self.on_history)
-        self.menu.append(item_history)
+        self._menu.append(item_history)
 
         # Reset (new button below History)
         item_reset = Gtk.MenuItem(label="Reset")
         item_reset.connect("activate", self.on_reset)
-        self.menu.append(item_reset)
+        self._menu.append(item_reset)
 
         # Separator
-        self.menu.append(Gtk.SeparatorMenuItem())
+        self._menu.append(Gtk.SeparatorMenuItem())
 
         # Quit
         item_quit = Gtk.MenuItem(label="Quit")
         item_quit.connect("activate", self.on_quit)
-        self.menu.append(item_quit)
+        self._menu.append(item_quit)
 
-        self.menu.show_all()
+        self._menu.show_all()
 
     def update_menu_items(self):
         """
         Update dynamic menu items with current session and history data.
         """
-        session_info = self.ta.current_session_info()
+        session_info = self._ta.current_session_info()
         if session_info is not None:
             start, now, duration = session_info
             started_dur_label = format_duration(duration)
@@ -187,13 +184,13 @@ class TrayApp:
         else:
             started_dur_label = "-"
             started_date_label = "Not running"
-        self.menu_items["current_session_dur"].set_label(started_dur_label)
-        self.menu_items["current_session_date"].set_label(started_date_label)
+        self._menu_items["current_session_dur"].set_label(started_dur_label)
+        self._menu_items["current_session_date"].set_label(started_date_label)
 
-        total_today_label = format_duration(self.ta.total_time_today())
-        self.menu_items["total_today"].set_label(total_today_label)
+        total_today_label = format_duration(self._ta.total_time_today())
+        self._menu_items["total_today"].set_label(total_today_label)
 
-        previous_session_info = self.ta.previous_session(verbose=False)
+        previous_session_info = self._ta.previous_session(verbose=False)
         if previous_session_info is not None:
             prev_start, prev_end, prev_duration = previous_session_info
             prev_dur_label = format_duration(prev_duration)
@@ -201,8 +198,8 @@ class TrayApp:
         else:
             prev_dur_label = "-"
             prev_date_label = "-"
-        self.menu_items["prev_dur"].set_label(prev_dur_label)
-        self.menu_items["prev_date"].set_label(prev_date_label)
+        self._menu_items["prev_dur"].set_label(prev_dur_label)
+        self._menu_items["prev_date"].set_label(prev_date_label)
 
     def render_icon(self, td: datetime.timedelta) -> Path:
         """
@@ -214,28 +211,18 @@ class TrayApp:
         Returns:
             Path: Path to the generated icon image.
         """
-        # Total seconds spent
-        total_minutes = td.total_seconds() / 60
+        total_minutes = (td.total_seconds() / 60) % 60
 
         text_filename = f"{int(total_minutes)}m"
-        icon_file = self.tmp_icon_dir / f"tray_icon_{text_filename}.png"
+        icon_file = self._tmp_icon_dir / f"tray_icon_{text_filename}.png"
 
         if icon_file.exists():
+            #logger.debug(f"Using existing icon image for {format_duration(td)} (time delta: {td}): {icon_file}")
             return icon_file
 
         # Determine fill percentage (1 hour = full circle, 1.5 hour = half circle etc.)
-        fill_fraction = min((total_minutes % 60.0) / 60.0, 1.0)  # Max 1.0 (100%)
-
-        if self.colorize_icon:
-            # Determine color based on time
-            if total_minutes < 60:
-                fill_color = (0, 122, 255, 255)  # Blue
-            elif total_minutes < 120:
-                fill_color = (128, 0, 128, 255)  # Purple
-            else:
-                fill_color = (255, 0, 0, 255)  # Red
-        else:
-            fill_color = (200, 200, 200, 255)
+        fill_fraction = min(total_minutes / 60.0, 1.0)  # Max 1.0 (100%)
+        fill_color = (200, 200, 200, 255)  # White
 
         # Icon size
         size = 128
@@ -269,21 +256,13 @@ class TrayApp:
         """
         Update the tray icon to reflect the current session duration.
         """
-        session_info = self.ta.current_session_info()
+        session_info = self._ta.current_session_info()
         if session_info is not None:
             _, _, duration = session_info
         else:
             duration = datetime.timedelta(seconds=0)
 
-        icon_change_minutes = 180 if self.colorize_icon else 60
-        total_minutes = duration.total_seconds() / 60
-        if total_minutes > icon_change_minutes:
-            # The icon will not change after icon_change_minutes minutes
-            return
-
         current_icon_file = self.render_icon(duration)
-
-        # Set the new icon
         self.indicator.set_icon_full(current_icon_file.as_posix(), "App Icon")
 
     def refresh(self):
@@ -302,7 +281,7 @@ class TrayApp:
         End the current session via the tray menu.
         """
         try:
-            self.ta.end_session()
+            self._ta.end_session()
             logger.info("Session ended via tray menu.")
         except Exception:
             logger.warning("Tried to end session via tray menu, but no session was active.")
@@ -312,7 +291,7 @@ class TrayApp:
         """
         Start a new session via the tray menu.
         """
-        self.ta.start_session()
+        self._ta.start_session()
         logger.info("New session started via tray menu.")
         self.refresh()
 
@@ -320,7 +299,7 @@ class TrayApp:
         """
         Show a dialog with session history and statistics.
         """
-        hist = self.ta.history()
+        hist = self._ta.history()
         number_of_sessions = len(hist['sessions'])
         number_of_sessions_digits = len(str(number_of_sessions)) if number_of_sessions > 0 else 1
         logger.info("History dialog opened. Sessions: {}", len(hist['sessions']))
@@ -338,7 +317,10 @@ class TrayApp:
         session_lines = []
         for i, session_info in enumerate(hist['sessions'], start=1):
             session_start, session_end, session_duration = session_info
-            session_date = f"{format_date(session_start)} {format_time(session_start)}–{format_time(session_end)}"
+            if session_duration.total_seconds() < 60 * 60 * 24:
+                session_date = f"{format_date(session_start)} {format_time(session_start)}–{format_time(session_end)}"
+            else:
+                session_date = f"{format_date(session_start)} {format_time(session_start)} – {format_date(session_end)} {format_time(session_end)}"
             session_dur = format_duration(session_duration)
             session_lines.append(f"({str(i).rjust(number_of_sessions_digits)}/{number_of_sessions}) {session_date} ({session_dur})")
         msg += "\n".join(session_lines) if session_lines else "No previous sessions."
@@ -381,14 +363,14 @@ class TrayApp:
         response = dialog.run()
         dialog.destroy()
         if response == Gtk.ResponseType.YES:
-            self.ta.reset()
+            self._ta.reset()
             logger.info("Database reset via tray menu.")
             self.refresh()
 
     def quit(self):
-        self.ta.quit_daemon()  # Stop the daemon thread if running
-        logger.info("Cleaning up icons in {}", self.tmp_icon_dir)
-        for icon_file in self.tmp_icon_dir.glob("tray_icon_*.png"):
+        self._ta.stop_daemon()  # Stop the daemon thread if running
+        logger.info("Cleaning up icons in {}", self._tmp_icon_dir)
+        for icon_file in self._tmp_icon_dir.glob("tray_icon_*.png"):
             icon_file.unlink(missing_ok=True)
 
     def on_quit(self, widget):

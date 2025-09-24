@@ -43,8 +43,21 @@ APPLICATIONS_DESKTOP_ENTRY="$HOME/.local/share/applications/time_awareness.deskt
 echo "Welcome to the Time Awareness uninstaller."
 echo "This script will remove the application files and autostart entry."
 echo
-echo -n "Confirm uninstallation."
-ask_proceed
+
+# Check for --yes argument
+SKIP_CONFIRM=false
+for arg in "$@"; do
+  if [ "$arg" == "--yes" ]; then
+    SKIP_CONFIRM=true
+    break
+  fi
+done
+
+if [ "$SKIP_CONFIRM" = false ]; then
+  echo -n "Confirm uninstallation."
+  ask_proceed
+  echo
+fi
 
 pkill -f time_awareness || true && sleep 3 >/dev/null 2>&1 &
 spinner $! "Waiting for the application to close"

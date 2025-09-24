@@ -11,14 +11,12 @@ def get_ta():
     if ta is None:
         app_dir = Path.home() / ".time_awareness"
         ta = TimeAwareness(app_dir)
-        ta.load_state()
     return ta
 
 @app.command()
 def start():
     """Start a new session."""
     get_ta().start_session()
-    get_ta().save_state()
     typer.echo("Session started.")
 
 @app.command()
@@ -26,17 +24,14 @@ def stop():
     """Stop the current session."""
     try:
         duration = get_ta().end_session()
-        get_ta().save_state()
         typer.echo(f"Session stopped. Duration: {duration}")
     except Exception as e:
         typer.echo(f"Error: {e}")
 
 @app.command()
-def daemon(end_session_idle_threshold: int = 10):
+def daemon():
     """Run the time awareness daemon."""
-    get_ta().end_session_idle_threshold = end_session_idle_threshold
-    get_ta().run_daemon()
-    get_ta().save_state()
+    get_ta()._daemon.run()
 
 @app.command()
 def history():
@@ -73,15 +68,15 @@ def live(interval: float = 1.0):
     try:
         while True:
             try:
-                get_ta().load_state()  # Reload state to reflect daemon changes
+                get_ta()._session_manager.load_state()  # Reload state to reflect daemon changes
                 session_info = get_ta().current_session_info()
                 if session_info is None:
-                    typer.echo("\rNo active session. Taking a break ...                                                                     ", nl=False)
+                    typer.echo("\r\033[KNo active session. Taking a break ...", nl=False)
                 else:
                     start, now, duration = session_info
-                    typer.echo(f"\rSession started: {start} | Now: {now} | Duration: {duration}", nl=False)
+                    typer.echo(f"\r\033[KSession started: {start} | Now: {now} | Duration: {duration}", nl=False)
             except Exception as e:
-                typer.echo(f"\rError: {e}                          ", nl=False)
+                typer.echo(f"\r\033[KError: {e}", nl=False)
             time.sleep(interval)
     except KeyboardInterrupt:
         typer.echo("\nLive session display stopped.")
