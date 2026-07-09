@@ -95,16 +95,29 @@ class FakeIface:
 
 
 def test__get_idle_time_linux_with_mutter(monkeypatch, monitor):
-    monkeypatch.setattr(time_awareness, "SessionBus", lambda: None)
-
     class FakeBus:
         def get(self, name, path):
-            return FakeIface(1000000)  # microseconds
+            return FakeIface(60000)  # Mutter GetIdletime returns milliseconds
 
     monkeypatch.setattr(time_awareness, "SessionBus", lambda: FakeBus())
     result = monitor._get_idle_time_linux()
     assert isinstance(result, datetime.timedelta)
-    assert result.total_seconds() > 0
+    assert result.total_seconds() == 60
+
+
+def test__get_idle_time_linux_caches_proxy(monkeypatch, monitor):
+    calls = []
+
+    class FakeBus:
+        def get(self, name, path):
+            calls.append(name)
+            return FakeIface(60000)
+
+    monkeypatch.setattr(time_awareness, "SessionBus", lambda: FakeBus())
+    monitor._get_idle_time_linux()
+    monitor._get_idle_time_linux()
+    # Proxy resolved once, not once per poll.
+    assert calls == ["org.gnome.Mutter.IdleMonitor"]
 
 
 def test__get_idle_time_linux_with_screensaver(monkeypatch, monitor):

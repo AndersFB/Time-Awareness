@@ -8,15 +8,14 @@ Time Awareness is a productivity tool that tracks your computer usage sessions, 
 
 - Tracks active computer usage sessions automatically.
 - Ends sessions after a configurable idle threshold.
+- Ends the session when the screen locks or the system suspends, and starts a new one on unlock/resume.
+- Distinguishes an app restart from a shutdown/reboot: after a quick restart (e.g. an update) the running session is resumed, while after a shutdown or reboot the previous session is closed at the last moment the app was seen running — no phantom time while the machine was off.
 - Tray applet for Ubuntu with session info and quick actions.
-- **Dynamic tray icon that visually shows time spent as a circle progress indicator:**
+- **Dynamic tray icon that visually shows time spent as a monochrome circle progress indicator:**
   - 0 min → empty circle.
   - 15 min → 25% filled.
-  - 1 hour → full circle.
-  - Colors change with time \(_optional_\):
-    - 0–59 min: blue.
-    - 60–119 min: purple.
-    - 120+ min: red.
+  - 60 min → full circle (then it starts over for the next hour).
+- Sessions never span midnight: a session crossing midnight is stored split at the day boundary, so daily totals and statistics stay accurate.
 - Session history and statistics (daily totals, averages, etc.).
 - Persistent state and logging.
 
@@ -87,7 +86,7 @@ The application uses **GNOME's IdleMonitor** via **D-Bus** to detect inactivity.
 
 ## ⚡ Quick Installation
 
-Run this command to automatically install all dependencies, clone the project into `~/.time_awareness`, create a virtual environment, install Python packages, and set up autostart:
+Run this command to automatically install all dependencies, clone the project into `~/.time_awareness/src`, create a virtual environment, install Python packages, and set up autostart:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/AndersFB/Time-Awareness/main/scripts/install.sh | bash
@@ -95,8 +94,8 @@ curl -sSL https://raw.githubusercontent.com/AndersFB/Time-Awareness/main/scripts
 
 This will:
 - Install required system packages.
-- Clone the repository to `~/.time_awareness`.
-- Create a Python virtual environment (`.venv`).
+- Clone the repository to `~/.time_awareness/src`.
+- Create a Python virtual environment (`~/.time_awareness/src/.venv`).
 - Install Python dependencies from `requirements.txt`.
 - Create an autostart entry so the tray app launches on login.
 - Launch the tray app immediately after installation.
@@ -208,7 +207,7 @@ If you did not use the automatic installer, you can set up autostart manually:
     Ensure you have installed all required system packages for your distribution (see Requirements).  
     On GNOME, make sure the AppIndicator extension is enabled (`gnome-extensions list | grep appindicator`).
   - **Python errors:**  
-    Make sure you are using Python 3.7 or newer and have activated the virtual environment (`source ~/.time_awareness/.venv/bin/activate`).
+    Make sure you are using Python 3.7 or newer and have activated the virtual environment (`source ~/.time_awareness/src/.venv/bin/activate`).
   - **Idle detection not working:**  
     Confirm that `pydbus` is installed and D-Bus is running.  
     Some desktop environments may not support idle detection; check the log for warnings.
@@ -219,7 +218,7 @@ If you did not use the automatic installer, you can set up autostart manually:
 - **Diagnosing problems:**
   - Run the app from a terminal to see live logs:
     ```bash
-    ~/.time_awareness/.venv/bin/python ~/.time_awareness/app.py
+    ~/.time_awareness/src/.venv/bin/python ~/.time_awareness/src/app.py
     ```
   - Check for missing dependencies:
     ```bash

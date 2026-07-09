@@ -2,6 +2,7 @@ import datetime
 import pytest
 
 import time_awareness
+from database import get_previous_session, set_metadata, get_sessions
 
 
 @pytest.fixture
@@ -28,9 +29,9 @@ def fake_monitor():
 
         def subscribe_lock_events(self, handler=None):
             self.subscribe_lock_called = True
-            return False
+            return self.screen_locked
 
-        def subscribe_sleep_events(self):
+        def subscribe_sleep_events(self, handler=None):
             self.subscribe_sleep_called = True
             return None
 
@@ -40,29 +41,41 @@ def fake_monitor():
 @pytest.fixture
 def daemon(session_manager, fake_monitor, monkeypatch):
     d = time_awareness.Daemon(session_manager, fake_monitor)
-    # prevent actual sleeping
-    monkeypatch.setattr(time_awareness.time, "sleep", lambda _: None)
+    # prevent actual sleeping between iterations
+    monkeypatch.setattr(d._daemon_stop_event, "wait", lambda *_: None)
     return d
+
+
+def run_one_iteration(daemon):
+    """Make the daemon loop run exactly one iteration, then stop."""
+    def fake_is_set():
+        if not hasattr(fake_is_set, "called"):
+            fake_is_set.called = True
+            return False
+        return True
+
+    daemon._daemon_stop_event.is_set = fake_is_set
 
 
 # ------------------------------
 # run startup behavior
 # ------------------------------
-def test_run_starts_session_on_fresh_boot(daemon, fake_monitor):
-    fake_monitor._uptime = 10  # below boot_detection_limit
-    fake_monitor._idle_time = datetime.timedelta(minutes=20)  # prevent restart
-    daemon._daemon_stop_event.set()
-    daemon.run(poll_interval=0.1, sleep_detection_threshold=1.0)
-    assert daemon._session_manager.current_session is not None
-
-
 def test_run_starts_session_when_none(daemon, fake_monitor):
-    fake_monitor._uptime = 200  # above boot_detection_limit
     fake_monitor._idle_time = datetime.timedelta(minutes=20)
     daemon._session_manager.current_session = None
     daemon._daemon_stop_event.set()
     daemon.run(poll_interval=0.1, sleep_detection_threshold=1.0)
     assert daemon._session_manager.current_session is not None
+    assert daemon._is_active
+
+
+def test_run_does_not_start_session_when_locked(daemon, fake_monitor):
+    fake_monitor.screen_locked = True
+    daemon._session_manager.current_session = None
+    daemon._daemon_stop_event.set()
+    daemon.run(poll_interval=0.1, sleep_detection_threshold=1.0)
+    assert daemon._session_manager.current_session is None
+    assert not daemon._is_active
 
 
 def test_run_subscribes_lock_and_sleep(daemon, fake_monitor):
@@ -74,21 +87,83 @@ def test_run_subscribes_lock_and_sleep(daemon, fake_monitor):
 
 
 # ------------------------------
+# stale session recovery (restart vs shutdown/reboot)
+# ------------------------------
+def test_recover_closes_session_after_reboot(daemon, fake_monitor):
+    now = datetime.datetime.now()
+    stale_start = now - datetime.timedelta(hours=3)
+    last_seen = now - datetime.timedelta(hours=2)
+    daemon._session_manager.current_session = stale_start
+    set_metadata("last_seen_time", last_seen.isoformat())
+
+    # Booted 60s ago, i.e. after last_seen -> machine was shut down/rebooted.
+    daemon._recover_stale_session(uptime=60)
+
+    assert daemon._session_manager.current_session is None
+    prev = get_previous_session(verbose=False)
+    assert prev is not None
+    assert prev[0] == stale_start
+    assert prev[1] == last_seen  # closed at last seen time, not at boot/now
+
+
+def test_recover_resumes_session_after_quick_app_restart(daemon, fake_monitor):
+    now = datetime.datetime.now()
+    stale_start = now - datetime.timedelta(hours=1)
+    last_seen = now - datetime.timedelta(seconds=10)
+    daemon._session_manager.current_session = stale_start
+    set_metadata("last_seen_time", last_seen.isoformat())
+
+    # Same boot (booted long before last_seen), app gone only 10s -> resume.
+    daemon._recover_stale_session(uptime=100000)
+
+    assert daemon._session_manager.current_session == stale_start
+    assert get_previous_session(verbose=False) is None
+
+
+def test_recover_closes_session_when_app_was_dead_long(daemon, fake_monitor):
+    now = datetime.datetime.now()
+    stale_start = now - datetime.timedelta(hours=3)
+    last_seen = now - datetime.timedelta(hours=2)
+    daemon._session_manager.current_session = stale_start
+    set_metadata("last_seen_time", last_seen.isoformat())
+
+    # Same boot but the app was gone for 2 hours -> close at last_seen.
+    daemon._recover_stale_session(uptime=100000)
+
+    assert daemon._session_manager.current_session is None
+    prev = get_previous_session(verbose=False)
+    assert prev is not None
+    assert prev[1] == last_seen
+
+
+def test_recover_discards_session_without_last_seen(daemon, fake_monitor):
+    stale_start = datetime.datetime.now() - datetime.timedelta(hours=1)
+    daemon._session_manager.current_session = stale_start
+
+    daemon._recover_stale_session(uptime=60)
+
+    assert daemon._session_manager.current_session is None
+    # Nothing usable to close it with -> no phantom session saved.
+    assert get_sessions() == []
+
+
+def test_recover_noop_without_stale_session(daemon, fake_monitor):
+    daemon._session_manager.current_session = None
+    daemon._recover_stale_session(uptime=60)
+    assert daemon._session_manager.current_session is None
+
+
+# ------------------------------
 # sleep detection
 # ------------------------------
 def test_detects_sleep_and_ends_session(daemon, fake_monitor):
     daemon._is_active = True
     daemon._session_manager.start_session()
     daemon._last_check = datetime.datetime.now() - datetime.timedelta(seconds=60)
+    daemon._last_check_monotonic = time_awareness._monotonic_time() - 60
     fake_monitor._idle_time = datetime.timedelta(minutes=20)  # ensure no restart
 
-    def fake_is_set():
-        if not hasattr(fake_is_set, "called"):
-            fake_is_set.called = True
-            return False
-        return True
-
-    daemon._daemon_stop_event.is_set = fake_is_set
+    run_one_iteration(daemon)
     daemon.run(poll_interval=0.1, sleep_detection_threshold=5.0)
 
     assert daemon._session_manager.current_session is None
@@ -96,27 +171,37 @@ def test_detects_sleep_and_ends_session(daemon, fake_monitor):
 
 
 # ------------------------------
-# reboot detection
+# sleep/lock event handlers
 # ------------------------------
-def test_detects_reboot_and_ends_session(daemon, fake_monitor):
+def test_sleep_event_ends_session(daemon, fake_monitor):
     daemon._is_active = True
-    daemon._end_session_on_restart = True
     daemon._session_manager.start_session()
-    fake_monitor._idle_time = datetime.timedelta(minutes=20)
 
-    uptimes = [200, 50]  # decreasing => reboot
-    fake_monitor.get_system_uptime = lambda: uptimes.pop(0)
-
-    def fake_is_set():
-        if not hasattr(fake_is_set, "called"):
-            fake_is_set.called = True
-            return False
-        return True
-
-    daemon._daemon_stop_event.is_set = fake_is_set
-    daemon.run(poll_interval=0.1, sleep_detection_threshold=100.0)
+    daemon._handle_sleep_event(True)
 
     assert daemon._session_manager.current_session is None
+    assert not daemon._is_active
+
+
+def test_resume_event_starts_session_when_unlocked_and_active(daemon, fake_monitor):
+    daemon._is_active = False
+    fake_monitor._idle_time = datetime.timedelta(seconds=1)
+
+    daemon._handle_sleep_event(False)
+
+    assert daemon._session_manager.current_session is not None
+    assert daemon._is_active
+
+
+def test_resume_event_waits_for_unlock(daemon, fake_monitor):
+    daemon._is_active = False
+    fake_monitor.screen_locked = True
+    fake_monitor._idle_time = datetime.timedelta(seconds=1)
+
+    daemon._handle_sleep_event(False)
+
+    assert daemon._session_manager.current_session is None
+    assert not daemon._is_active
 
 
 # ------------------------------
@@ -128,13 +213,7 @@ def test_session_ends_on_idle_threshold(daemon, fake_monitor):
     fake_monitor._idle_time = datetime.timedelta(minutes=20)
     daemon._end_session_idle_threshold = datetime.timedelta(minutes=10)
 
-    def fake_is_set():
-        if not hasattr(fake_is_set, "called"):
-            fake_is_set.called = True
-            return False
-        return True
-
-    daemon._daemon_stop_event.is_set = fake_is_set
+    run_one_iteration(daemon)
     daemon.run(poll_interval=0.1, sleep_detection_threshold=100.0)
 
     assert daemon._session_manager.current_session is None
@@ -147,13 +226,7 @@ def test_session_starts_when_user_active(daemon, fake_monitor):
     fake_monitor._idle_time = datetime.timedelta(seconds=5)
     daemon._end_session_idle_threshold = datetime.timedelta(minutes=10)
 
-    def fake_is_set():
-        if not hasattr(fake_is_set, "called"):
-            fake_is_set.called = True
-            return False
-        return True
-
-    daemon._daemon_stop_event.is_set = fake_is_set
+    run_one_iteration(daemon)
     daemon.run(poll_interval=0.1, sleep_detection_threshold=100.0)
 
     assert daemon._session_manager.current_session is not None
@@ -168,19 +241,5 @@ def test_stop_cleans_up(daemon, fake_monitor):
     daemon._session_manager.start_session()
     fake_monitor._idle_time = datetime.timedelta(minutes=20)
     daemon.stop()
-    assert not daemon._is_active or daemon._session_manager.current_session is None
-
-
-# ------------------------------
-# new helper methods
-# ------------------------------
-def test_is_fresh_boot_detects_true(monkeypatch, daemon):
-    # force no last_seen_time in metadata
-    monkeypatch.setattr(time_awareness, "get_metadata", lambda *a, **kw: "")
-    assert daemon._is_fresh_boot(uptime=5)
-
-
-def test_is_fresh_boot_detects_false_recent(monkeypatch, daemon):
-    recent = (datetime.datetime.now() - datetime.timedelta(minutes=1)).isoformat()
-    monkeypatch.setattr(time_awareness, "get_metadata", lambda *a, **kw: recent)
-    assert not daemon._is_fresh_boot(uptime=5)
+    assert daemon._session_manager.current_session is None
+    assert not daemon._is_active

@@ -44,7 +44,7 @@ def test_format_time(dt, expected):
 
 @pytest.mark.parametrize("dt,expected", [
     (None, "-"),
-    (datetime.datetime(2024, 6, 1), "06.01.2024"),
+    (datetime.datetime(2024, 6, 1), "01.06.2024"),
 ])
 def test_format_date(dt, expected):
     assert format_date(dt) == expected

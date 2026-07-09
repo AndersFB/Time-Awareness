@@ -2,13 +2,13 @@ import datetime
 import pytest
 import time_awareness
 
+from database import save_session, get_sessions
+
 
 @pytest.fixture
 def manager(use_in_memory_db):
     """
     Provides a SessionManager bound to the in-memory database.
-    The `use_in_memory_db` fixture is expected to configure the DB
-    (via configure_database + create_tables_if_not_exist).
     """
     return time_awareness.SessionManager()
 
@@ -65,54 +65,104 @@ def test_end_session_at_without_start(manager):
 
 
 # ------------------------------
+# midnight splitting
+# ------------------------------
+def test_split_at_midnight_single_day():
+    start = datetime.datetime(2026, 7, 8, 9, 0)
+    end = datetime.datetime(2026, 7, 8, 17, 0)
+    segments = time_awareness.SessionManager._split_at_midnight(start, end)
+    assert segments == [(start, end)]
+
+
+def test_split_at_midnight_across_days():
+    start = datetime.datetime(2026, 7, 7, 23, 0)
+    end = datetime.datetime(2026, 7, 9, 1, 0)
+    segments = time_awareness.SessionManager._split_at_midnight(start, end)
+    assert segments == [
+        (start, datetime.datetime(2026, 7, 8, 0, 0)),
+        (datetime.datetime(2026, 7, 8, 0, 0), datetime.datetime(2026, 7, 9, 0, 0)),
+        (datetime.datetime(2026, 7, 9, 0, 0), end),
+    ]
+
+
+def test_split_at_midnight_drops_zero_length_segment():
+    start = datetime.datetime(2026, 7, 7, 23, 0)
+    end = datetime.datetime(2026, 7, 8, 0, 0)  # ends exactly at midnight
+    segments = time_awareness.SessionManager._split_at_midnight(start, end)
+    assert segments == [(start, end)]
+
+
+def test_end_session_crossing_midnight_saves_split_and_counts_today_only(manager):
+    today = datetime.date.today()
+    midnight = datetime.datetime.combine(today, datetime.time.min)
+    start = midnight - datetime.timedelta(hours=1)  # yesterday 23:00
+    end = midnight + datetime.timedelta(hours=1)  # today 01:00
+    manager.current_session = start
+
+    duration = manager.end_session_at(end)
+
+    assert duration.total_seconds() == 7200
+    sessions = get_sessions()
+    assert len(sessions) == 2
+    # Only the post-midnight hour counts towards today's total.
+    assert manager.today_total == 3600
+
+
+# ------------------------------
 # save_state / load_state
 # ------------------------------
-def test_save_and_load_state_respects_interval(manager, monkeypatch):
-    # capture calls to set_metadata
+def test_save_state_persists_immediately(manager, monkeypatch):
+    """State changes must be written on every call - no throttling that could
+    lose a session start/end on crash."""
     calls = []
+    monkeypatch.setattr(time_awareness, "set_metadata", lambda k, v: calls.append((k, v)))
 
-    def fake_set_metadata(key, value):
-        calls.append((key, value))
-
-    monkeypatch.setattr(time_awareness, "set_metadata", fake_set_metadata)
-
-    # freeze time
-    now = [1000.0]
-    monkeypatch.setattr(time_awareness.time, "time", lambda: now[0])
-
-    # First save_state should run
     manager.today_total = 42
     manager._last_update_date = datetime.date.today()
     manager.save_state()
     assert any(key == "today_total" for key, _ in calls)
 
-    # Clear calls and immediately call again at the same "time"
     calls.clear()
-    manager.save_state()
-    assert calls == []  # nothing written because interval not passed
-
-    # Advance time beyond save interval (default 30s)
-    now[0] += 31
-    manager.save_state()
+    manager.save_state()  # immediately again - must still write
     assert any(key == "today_total" for key, _ in calls)
 
+
+def test_save_and_load_state_roundtrip(manager):
+    now = datetime.datetime.now().replace(microsecond=0)
+    manager.today_total = 123.0
+    manager._last_update_date = datetime.date.today()
+    manager.current_session = now
+    manager.save_state()
+
+    restored = time_awareness.SessionManager()
+    restored.load_state()
+    assert restored.today_total == 123.0
+    assert restored._last_update_date == datetime.date.today()
+    assert restored.current_session == now
+
+
+def test_load_state_handles_empty_metadata(manager):
+    manager.load_state()
+    assert manager.today_total == 0
+    assert manager._last_update_date is None
+    assert manager.current_session is None
 
 
 # ------------------------------
 # check_day_rollover
 # ------------------------------
-def test_check_day_rollover_resets_total(manager):
+def test_check_day_rollover_recomputes_from_saved_sessions(manager):
     manager.today_total = 100
     manager._last_update_date = datetime.date.today() - datetime.timedelta(days=1)
 
-    # Simulate a session that overlaps midnight
-    midnight = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
-    manager.current_session = midnight - datetime.timedelta(minutes=30)
+    # A session already saved for today should be picked up.
+    start = datetime.datetime.combine(datetime.date.today(), datetime.time(hour=1))
+    end = start + datetime.timedelta(minutes=30)
+    save_session(start, end, end - start)
 
     manager.check_day_rollover()
     assert manager._last_update_date == datetime.date.today()
-    # today_total may be 0 or small overlap, but should not remain 100
-    assert manager.today_total <= 600
+    assert manager.today_total == 1800
 
 
 def test_check_day_rollover_no_previous(manager):
@@ -121,6 +171,20 @@ def test_check_day_rollover_no_previous(manager):
 
     manager.check_day_rollover()
     assert manager.today_total == 0
+    assert manager._last_update_date == datetime.date.today()
+
+
+def test_check_day_rollover_same_day_keeps_total(manager):
+    manager.today_total = 50
+    manager._last_update_date = datetime.date.today()
+
+    manager.check_day_rollover()
+    assert manager.today_total == 50
+
+
+def test_check_day_rollover_initializes_date(manager):
+    manager._last_update_date = None
+    manager.check_day_rollover()
     assert manager._last_update_date == datetime.date.today()
 
 
