@@ -75,7 +75,9 @@ fi
 git pull origin main >/dev/null 2>&1 &
 spinner $! "Merging latest changes"
 
-pkill -f time_awareness || true && sleep 3 && gtk-launch time_awareness >/dev/null 2>&1 &
+# Match only the running app (python .../app.py), not this script's own
+# command line, which also contains "time_awareness".
+{ pkill -f '[.]time_awareness/src/app\.py' || true; sleep 3; gtk-launch time_awareness >/dev/null 2>&1; } &
 spinner $! "Restarting the application"
 
 echo

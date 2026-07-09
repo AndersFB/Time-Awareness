@@ -1,3 +1,4 @@
+import signal
 import typer
 from pathlib import Path
 import time
@@ -22,16 +23,22 @@ def start():
 @app.command()
 def stop():
     """Stop the current session."""
-    try:
-        duration = get_ta().end_session()
+    duration = get_ta().end_session()
+    if duration is None:
+        typer.echo("No active session.")
+    else:
         typer.echo(f"Session stopped. Duration: {duration}")
-    except Exception as e:
-        typer.echo(f"Error: {e}")
 
 @app.command()
 def daemon():
     """Run the time awareness daemon."""
-    get_ta()._daemon.run()
+    ta = get_ta()
+    # No GLib main loop runs in CLI mode, so the daemon must pump GLib events
+    # itself for D-Bus lock/sleep signals to be delivered.
+    ta._daemon._pump_glib_events_enabled = True
+    # End the session cleanly when the system or user terminates the daemon.
+    signal.signal(signal.SIGTERM, lambda *_: ta._daemon.stop())
+    ta._daemon.run()
 
 @app.command()
 def history():
@@ -44,7 +51,7 @@ def history():
     typer.echo(f"Weekday average: {h['weekday_average']}")
     typer.echo(f"Total average: {h['total_average']}")
     typer.echo("Session history:")
-    for start, end, duration in h["history"]:
+    for start, end, duration in h["sessions"]:
         typer.echo(f"  {start} - {end} ({duration})")
 
 @app.command()

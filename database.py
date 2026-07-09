@@ -32,7 +32,18 @@ def configure_database(database: Path):
         SqliteDatabase: The configured database instance.
     """
     logger.info("Configuring database: {}", database)
-    db = SqliteDatabase(database.as_posix(), autoconnect=False)
+    # WAL + busy_timeout: the GTK main thread (lock handler, menu refresh) and
+    # the daemon thread both use the database; without these, concurrent access
+    # sporadically fails with "database is locked".
+    db = SqliteDatabase(
+        database.as_posix(),
+        autoconnect=False,
+        pragmas={
+            "journal_mode": "wal",
+            "busy_timeout": 5000,
+            "synchronous": "normal",
+        },
+    )
     database_proxy.initialize(db)
     logger.info("Database configured successfully: {}", database)
     return db
@@ -48,10 +59,7 @@ def with_database(func):
         if was_closed:
             database_proxy.connect()
         try:
-            result = func(*args, **kwargs)
-            return result
-        except Exception as e:
-            raise
+            return func(*args, **kwargs)
         finally:
             # Only close if we opened the connection
             if was_closed and not database_proxy.is_closed():
@@ -109,7 +117,11 @@ def get_sessions(return_count: bool = False) -> Union[int, List[Tuple[datetime.d
         list: List of tuples (start, end, duration) if return_count is False.
     """
     if return_count:
-        return Session.select().count()
+        try:
+            return Session.select().count()
+        except Exception as e:
+            logger.error("Failed to count sessions: {}", e)
+            return 0
 
     try:
         history = [
@@ -136,7 +148,9 @@ def set_metadata(key: str, value: Any) -> bool:
     """
     try:
         MetaData.insert(key=key, value=str(value)).on_conflict_replace().execute()
-        logger.info("Metadata set: {} = {}", key, value)
+        # debug level: the daemon writes last_seen_time on every poll and info
+        # level would flood the log file.
+        logger.debug("Metadata set: {} = {}", key, value)
         return True
     except Exception as e:
         logger.error("Failed to set metadata '{}': {}", key, e)

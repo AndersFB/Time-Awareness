@@ -3,10 +3,13 @@ gi.require_version('AyatanaAppIndicator3', '0.1')
 from gi.repository import AyatanaAppIndicator3 as AppIndicator3
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 from pathlib import Path
 from loguru import logger
 import datetime
+import shutil
+import signal
+import tempfile
 
 from time_awareness import TimeAwareness
 
@@ -32,16 +35,16 @@ def format_time(dt: datetime.datetime) -> str:
 def format_date(dt: datetime.datetime) -> str:
     if dt is None:
         return "-"
-    return dt.strftime("%m.%d.%Y")
+    return dt.strftime("%d.%m.%Y")
 
 class TrayApp:
     def __init__(self, update_app_interval: int = 10):
         """
         Initialize the tray application, indicator, and menu.
         """
-        self._tmp_icon_dir = Path("/tmp/time_awareness/")
-        if not self._tmp_icon_dir.exists():
-            self._tmp_icon_dir.mkdir(parents=True)
+        # Private per-run directory: a fixed /tmp path collides between users
+        # and is open to squatting by other accounts.
+        self._tmp_icon_dir = Path(tempfile.mkdtemp(prefix="time_awareness_icons_"))
 
         self._ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
 
@@ -280,11 +283,8 @@ class TrayApp:
         """
         End the current session via the tray menu.
         """
-        try:
-            self._ta.end_session()
-            logger.info("Session ended via tray menu.")
-        except Exception:
-            logger.warning("Tried to end session via tray menu, but no session was active.")
+        self._ta.end_session()
+        logger.info("Session ended via tray menu.")
         self.refresh()
 
     def on_new_session(self, widget):
@@ -330,7 +330,7 @@ class TrayApp:
             transient_for=None,
             modal=True
         )
-        dialog.add_button(Gtk.STOCK_OK, Gtk.ResponseType.OK)
+        dialog.add_button("OK", Gtk.ResponseType.OK)
         dialog.set_default_size(400, 300)
 
         scrolled = Gtk.ScrolledWindow()
@@ -370,8 +370,7 @@ class TrayApp:
     def quit(self):
         self._ta.stop_daemon()  # Stop the daemon thread if running
         logger.info("Cleaning up icons in {}", self._tmp_icon_dir)
-        for icon_file in self._tmp_icon_dir.glob("tray_icon_*.png"):
-            icon_file.unlink(missing_ok=True)
+        shutil.rmtree(self._tmp_icon_dir, ignore_errors=True)
 
     def on_quit(self, widget):
         """
@@ -388,6 +387,20 @@ def main():
     app = None
     try:
         app = TrayApp()
+
+        def on_termination_signal():
+            logger.info("Termination signal received; quitting.")
+            app.quit()
+            Gtk.main_quit()
+            return GLib.SOURCE_REMOVE
+
+        # System shutdown/logout sends SIGTERM; without this the process is
+        # killed with the session still open. GLib.unix_signal_add is required
+        # because plain Python signal handlers don't run while Gtk.main()
+        # blocks in C code.
+        GLib.unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGTERM, on_termination_signal)
+        GLib.unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGINT, on_termination_signal)
+
         Gtk.main()
     except KeyboardInterrupt:
         print("KeyboardInterrupt detected, quitting...")

@@ -59,7 +59,9 @@ if [ "$SKIP_CONFIRM" = false ]; then
   echo
 fi
 
-pkill -f time_awareness || true && sleep 3 >/dev/null 2>&1 &
+# Match only the running app (python .../app.py), not this script's own
+# command line, which also contains "time_awareness".
+{ pkill -f '[.]time_awareness/src/app\.py' || true; sleep 3; } >/dev/null 2>&1 &
 spinner $! "Waiting for the application to close"
 
 rm -rf "$APP_DIR" >/dev/null 2>&1 &
