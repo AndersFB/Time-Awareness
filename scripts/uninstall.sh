@@ -36,6 +36,13 @@ spinner() {
   return $exit_code
 }
 
+# Guard against an unset HOME turning the removals below into paths at the
+# filesystem root.
+if [ -z "$HOME" ]; then
+  echo "HOME is not set; refusing to remove anything." > /dev/tty
+  exit 1
+fi
+
 APP_DIR="$HOME/.time_awareness"
 AUTOSTART_DESKTOP_ENTRY="$HOME/.config/autostart/time_awareness.desktop"
 APPLICATIONS_DESKTOP_ENTRY="$HOME/.local/share/applications/time_awareness.desktop"

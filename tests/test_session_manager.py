@@ -32,10 +32,14 @@ def test_end_session_without_start(manager):
 
 def test_start_session_too_close(manager):
     manager.start_session()
-    # Pretend last session was just started
-    manager.current_session = datetime.datetime.now()
-    result = manager.start_session()  # should not start a new one
-    assert result is None
+    # Pretend the current session was just started.
+    just_started = datetime.datetime.now()
+    manager.current_session = just_started
+
+    manager.start_session()  # should not roll over into a new session
+
+    assert manager.current_session == just_started
+    assert get_sessions() == []  # nothing was closed and saved
 
 
 # ------------------------------
@@ -115,16 +119,30 @@ def test_save_state_persists_immediately(manager, monkeypatch):
     """State changes must be written on every call - no throttling that could
     lose a session start/end on crash."""
     calls = []
-    monkeypatch.setattr(time_awareness, "set_metadata", lambda k, v: calls.append((k, v)))
+    monkeypatch.setattr(time_awareness, "set_metadata_bulk", lambda items: calls.append(items))
 
     manager.today_total = 42
     manager._last_update_date = datetime.date.today()
     manager.save_state()
-    assert any(key == "today_total" for key, _ in calls)
+    assert any("today_total" in item for item in calls)
 
     calls.clear()
     manager.save_state()  # immediately again - must still write
-    assert any(key == "today_total" for key, _ in calls)
+    assert any("today_total" in item for item in calls)
+
+
+def test_save_state_writes_all_keys_in_one_call(manager, monkeypatch):
+    """The three state values must be written together, not one key at a time."""
+    calls = []
+    monkeypatch.setattr(time_awareness, "set_metadata_bulk", lambda items: calls.append(items))
+
+    manager.today_total = 7
+    manager._last_update_date = datetime.date.today()
+    manager.current_session = datetime.datetime.now()
+    manager.save_state()
+
+    assert len(calls) == 1
+    assert set(calls[0]) == {"today_total", "last_update_date", "current_session"}
 
 
 def test_save_and_load_state_roundtrip(manager):

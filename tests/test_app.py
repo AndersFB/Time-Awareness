@@ -8,7 +8,7 @@ def ayatana_available():
         import gi
         gi.require_version('AyatanaAppIndicator3', '0.1')
         from gi.repository import AyatanaAppIndicator3
-        return True
+        return AyatanaAppIndicator3 is not None
     except Exception:
         return False
 

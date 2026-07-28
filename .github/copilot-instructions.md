@@ -15,6 +15,7 @@ Time-Awareness is a Linux desktop productivity tool that tracks computer usage s
 ├── time_awareness.py   # Core logic: TimeAwareness, SessionManager, SystemMonitor, Daemon
 ├── database.py         # Peewee ORM models and database operations
 ├── requirements.txt    # Python dependencies
+├── CLAUDE.md           # Architecture notes, invariants, and conventions
 ├── scripts/            # Installation/update/uninstall shell scripts
 │   ├── install.sh
 │   ├── update.sh
@@ -76,9 +77,16 @@ python app.py
 python main.py start      # Start session
 python main.py stop       # Stop session
 python main.py current    # Show current session info
-python main.py history    # Show session history
-python main.py daemon     # Run background daemon
+python main.py live       # Continuously show current session info
+python main.py history    # Show session history and statistics
+python main.py daemon     # Run the daemon in the foreground
+python main.py reset      # Delete all sessions and metadata (prompts first)
 ```
+
+**Note:** The CLI and the tray app are separate processes sharing one SQLite
+file, each with its own in-memory session state. Running `start`/`stop`/`reset`
+while the tray app is running lets the two overwrite each other's current
+session. The read-only commands are safe to use alongside it.
 
 ## Key Dependencies
 
@@ -94,21 +102,32 @@ python main.py daemon     # Run background daemon
 
 ## Architecture Notes
 
-- **TimeAwareness** (`time_awareness.py:458`): Main wrapper coordinating SessionManager, SystemMonitor, and Daemon
-- **SessionManager** (`time_awareness.py:173`): Handles session start/end, state persistence, day rollover
-- **SystemMonitor** (`time_awareness.py:30`): System uptime, idle time, D-Bus lock/sleep events
-- **Daemon** (`time_awareness.py:318`): Background thread for idle detection and automatic session management
-- **TrayApp** (`app.py:37`): GTK tray icon with menu, icon rendering, and user interactions
+- **TimeAwareness** (`time_awareness.py`): Main wrapper coordinating SessionManager, SystemMonitor, and Daemon
+- **SessionManager** (`time_awareness.py`): Handles session start/end, state persistence, day rollover
+- **SystemMonitor** (`time_awareness.py`): System uptime, idle time, D-Bus lock/sleep events
+- **Daemon** (`time_awareness.py`): Background thread for idle detection and automatic session management
+- **TrayApp** (`app.py`): GTK tray icon with menu, icon rendering, and user interactions
 
 Database files are stored in `~/.time_awareness/`:
 - `timeawareness.sqlite` - Session data
 - `timeawareness.log` - Application logs
+
+**`CLAUDE.md` in the repository root documents the invariants that are easy to
+break** - the suspend-aware clock choice, midnight splitting, `last_seen_time`
+restart-vs-reboot recovery, the daemon shutdown handshake, and the GLib callback
+rules. Read it before changing session tracking, threading, or D-Bus code.
 
 ## Testing Patterns
 
 Tests use fixtures from `tests/conftest.py`:
 - `use_in_memory_db`: Creates in-memory SQLite database, initializes tables
 - `enable_logging`: Configures Loguru for stdout during tests
+
+`use_in_memory_db` uses a uniquely named **shared-cache** in-memory database
+(`file:testdbN?mode=memory&cache=shared`) rather than plain `:memory:`. Peewee
+stores connection state in a thread-local, so with `:memory:` any background
+thread would open its own empty database and every query it makes would fail
+silently. Keep the shared cache when touching this fixture.
 
 To auto-apply the in-memory database fixture to all tests in a module:
 ```python
@@ -132,7 +151,9 @@ def test_example():
 Before completing changes:
 1. Run `python -m pytest tests/ -v` - all tests should pass
 2. Verify no import errors: `python -c "import database; import time_awareness"`
-3. For GUI changes: test on system with GTK if possible
+3. Run `bash -n scripts/*.sh` if the shell scripts changed
+4. For GUI changes: test on system with GTK if possible
+5. Update `README.md` when behaviour visible to users changes
 
 ## Trust These Instructions
 

@@ -35,9 +35,11 @@ def daemon():
     ta = get_ta()
     # No GLib main loop runs in CLI mode, so the daemon must pump GLib events
     # itself for D-Bus lock/sleep signals to be delivered.
-    ta._daemon._pump_glib_events_enabled = True
+    ta._daemon.enable_glib_event_pump()
     # End the session cleanly when the system or user terminates the daemon.
-    signal.signal(signal.SIGTERM, lambda *_: ta._daemon.stop())
+    # The handler only flags the loop; run() closes the session once it has left
+    # the iteration it was interrupted in, so no database call is re-entered.
+    signal.signal(signal.SIGTERM, lambda *_: ta._daemon.request_stop())
     ta._daemon.run()
 
 @app.command()
@@ -72,11 +74,12 @@ def current():
 @app.command()
 def live(interval: float = 1.0):
     """Continuously show current session info."""
+    ta = get_ta()
     try:
         while True:
             try:
-                get_ta()._session_manager.load_state()  # Reload state to reflect daemon changes
-                session_info = get_ta().current_session_info()
+                ta._session_manager.load_state()  # Reload state to reflect daemon changes
+                session_info = ta.current_session_info(verbose=False)
                 if session_info is None:
                     typer.echo("\r\033[KNo active session. Taking a break ...", nl=False)
                 else:

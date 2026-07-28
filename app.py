@@ -16,10 +16,16 @@ from time_awareness import TimeAwareness
 APP_ID = "time_awareness_tray"
 APP_DIR = Path.home() / ".time_awareness"
 
+# The history dialog renders every session into a single text buffer. Cap it so
+# a long-lived database cannot freeze the UI for seconds when the menu is used.
+MAX_HISTORY_ROWS = 500
+
 def format_duration(td: datetime.timedelta) -> str:
     if td is None:
         return "-"
-    total_seconds = int(td.total_seconds())
+    # Clamp: a negative delta (clock stepped backwards) would otherwise render
+    # as nonsense like "-1h. 59m." because divmod rounds towards -infinity.
+    total_seconds = max(0, int(td.total_seconds()))
     hours, remainder = divmod(total_seconds, 3600)
     minutes = (remainder // 60)
     if hours > 0:
@@ -45,6 +51,8 @@ class TrayApp:
         # Private per-run directory: a fixed /tmp path collides between users
         # and is open to squatting by other accounts.
         self._tmp_icon_dir = Path(tempfile.mkdtemp(prefix="time_awareness_icons_"))
+        self._current_icon_file = None
+        self._quit_done = False
 
         self._ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
 
@@ -266,7 +274,12 @@ class TrayApp:
             duration = datetime.timedelta(seconds=0)
 
         current_icon_file = self.render_icon(duration)
+        # The icon only changes once a minute while the refresh runs every few
+        # seconds; re-setting the same path makes the indicator redraw for nothing.
+        if current_icon_file == self._current_icon_file:
+            return
         self.indicator.set_icon_full(current_icon_file.as_posix(), "App Icon")
+        self._current_icon_file = current_icon_file
 
     def refresh(self):
         """
@@ -275,8 +288,14 @@ class TrayApp:
         Returns:
             bool: True to continue periodic refresh.
         """
-        self.update_icon()
-        self.update_menu_items()
+        # Never let an exception escape into GLib: an uncaught error in a
+        # timeout callback removes the source, which would silently freeze the
+        # tray icon and menu for the rest of the session.
+        try:
+            self.update_icon()
+            self.update_menu_items()
+        except Exception as e:
+            logger.exception("Tray refresh failed: {}", e)
         return True  # continue timer
 
     def on_disable(self, widget):
@@ -314,8 +333,12 @@ class TrayApp:
             f"Sessions: {number_of_sessions}\n\n"
         )
 
+        shown_sessions = hist['sessions'][:MAX_HISTORY_ROWS]
+        if len(shown_sessions) < number_of_sessions:
+            msg += f"Showing the {len(shown_sessions)} most recent sessions.\n\n"
+
         session_lines = []
-        for i, session_info in enumerate(hist['sessions'], start=1):
+        for i, session_info in enumerate(shown_sessions, start=1):
             session_start, session_end, session_duration = session_info
             if session_duration.total_seconds() < 60 * 60 * 24:
                 session_date = f"{format_date(session_start)} {format_time(session_start)}–{format_time(session_end)}"
@@ -368,6 +391,10 @@ class TrayApp:
             self.refresh()
 
     def quit(self):
+        # SIGTERM during shutdown and the Quit menu item can both land here.
+        if self._quit_done:
+            return
+        self._quit_done = True
         self._ta.stop_daemon()  # Stop the daemon thread if running
         logger.info("Cleaning up icons in {}", self._tmp_icon_dir)
         shutil.rmtree(self._tmp_icon_dir, ignore_errors=True)
@@ -403,11 +430,14 @@ def main():
 
         Gtk.main()
     except KeyboardInterrupt:
-        print("KeyboardInterrupt detected, quitting...")
+        logger.info("KeyboardInterrupt detected, quitting...")
+    except Exception:
+        logger.exception("Unexpected exception in tray app; shutting down.")
+    finally:
+        # Always run cleanup, so a crash still closes and flushes the session
+        # instead of leaving it dangling in the database.
         if app:
             app.quit()
-    except Exception as e:
-        print(f"Unexpected exception: {e}")
 
 if __name__ == "__main__":
     main()
