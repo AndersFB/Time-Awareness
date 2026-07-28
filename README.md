@@ -7,7 +7,7 @@ Time Awareness is a productivity tool that tracks your computer usage sessions, 
 ## ✨ Features
 
 - Tracks active computer usage sessions automatically.
-- Ends sessions after a configurable idle threshold.
+- Ends sessions after an idle threshold (10 minutes).
 - Ends the session when the screen locks or the system suspends, and starts a new one on unlock/resume.
 - Distinguishes an app restart from a shutdown/reboot: after a quick restart (e.g. an update) the running session is resumed, while after a shutdown or reboot the previous session is closed at the last moment the app was seen running — no phantom time while the machine was off.
 - Tray applet for Ubuntu with session info and quick actions.
@@ -16,12 +16,17 @@ Time Awareness is a productivity tool that tracks your computer usage sessions, 
   - 15 min → 25% filled.
   - 60 min → full circle (then it starts over for the next hour).
 - Sessions never span midnight: a session crossing midnight is stored split at the day boundary, so daily totals and statistics stay accurate.
+- Does not record time you were not there: starting while you are already away waits for activity instead of opening a session.
 - Session history and statistics (daily totals, averages, etc.).
 - Persistent state and logging.
+- Command line interface alongside the tray applet.
+- Configurable through a plain `config.ini`; only one instance tracks at a time,
+  so the tray app and the CLI can never overwrite each other's session.
 
 ## 🛠️ Requirements
 
-- **Python 3.7+**
+- **Python 3.10+** (set by the current releases of the Python dependencies below;
+  the application code itself needs only 3.7+)
 - **Linux desktop with AyatanaAppIndicator3 support (Ubuntu, Debian, Fedora, CentOS, etc.)**
 - **Python dependencies:** (installed via `requirements.txt`)
   - `pytest`
@@ -187,20 +192,84 @@ If you did not use the automatic installer, you can set up autostart manually:
 
 ## 🕹️ Usage
 
+### Tray menu
+
 - **Current session**: When it started and its duration.
-- **Total today**: How much time you've spent today.
+- **Total today**: How much time you've spent today, including the session running right now.
 - **Previous session**: Details of your last session.
-- **Disable**: Ends the current session.
+- **Disable**: Ends the current session. Tracking resumes after you have been idle past the idle threshold and come back.
 - **New session**: Starts a new session.
 - **History**: Shows summary statistics and session details.
 - **Reset**: Clears all tracked data and resets the database.
 - **Quit**: Cleans up and exits the tray app.
+
+### What the statistics mean
+
+| Value | Meaning |
+|---|---|
+| **Total today** | Today's completed sessions plus the part of the running session that falls on today |
+| **Total yesterday** | Sum of yesterday's sessions |
+| **7-day average** | Average time per day over the last 7 calendar days, counting only the days you actually used the computer |
+| **Weekday average** | Average daily total for each weekday, then averaged across the weekdays that have data |
+| **Total average** | Average length of a single session across your whole history |
+
+### Command line
+
+The CLI is a second front end onto the same database, useful without a tray or
+over SSH:
+
+```bash
+python main.py current     # show the running session
+python main.py live        # keep printing the running session (Ctrl+C to stop)
+python main.py history     # statistics and full session history
+python main.py start       # start a session
+python main.py stop        # stop the running session
+python main.py daemon      # run the tracker in the foreground, without a GUI
+python main.py reset       # delete all data (asks for confirmation)
+```
+
+Only one process may track your time at a time, so the tray app and a CLI daemon
+cannot fight over the same session. `current`, `live` and `history` are
+read-only and always work. `start`, `stop` and `reset` refuse to run while the
+tray app is tracking, since they would overwrite the session it holds:
+
+```
+$ python main.py stop
+Time Awareness is already tracking in another process (PID 4711).
+'stop' would overwrite the session that process is tracking.
+Use the tray menu instead, or pass --force to do it anyway.
+```
+
+Pass `--force` if you really want to override.
+
+## ⚙️ Configuration
+
+Settings live in `~/.time_awareness/config.ini`, which is created with the
+defaults and a comment for each setting the first time the app runs. Edit it and
+restart the app; delete it to go back to the defaults.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `idle_threshold_minutes` | `10` | Minutes without keyboard or mouse activity before the session ends |
+| `poll_interval_seconds` | `5` | How often idle time is checked |
+| `sleep_detection_threshold_seconds` | `30` | A gap larger than this between two checks counts as the machine having been suspended |
+| `monitor_lock_and_sleep` | `true` | End the session on screen lock and suspend, resume on unlock (needs D-Bus) |
+| `tray_refresh_seconds` | `10` | How often the tray icon and menu update |
+| `max_history_rows` | `500` | Sessions listed in the History dialog; `0` for no limit |
+| `verbose` | `false` | Log every idle check, for troubleshooting |
+
+Bad values do not stop the app: anything unparsable falls back to its default,
+values below a sensible minimum are raised to it, and
+`sleep_detection_threshold_seconds` is pushed above `poll_interval_seconds` if
+you set it lower (otherwise every ordinary check would look like a suspend). All
+corrections are logged.
 
 ## 🧩 Troubleshooting
 
 - **Log file:**  
   All errors and activity are logged to `~/.time_awareness/timeawareness.log`.  
   Check this file for details if the app fails to start or behaves unexpectedly.
+  Set `verbose = true` in `config.ini` for per-check detail.
 
 - **Common issues:**
   - **Missing tray icon:**  
@@ -210,10 +279,17 @@ If you did not use the automatic installer, you can set up autostart manually:
     Make sure you are using Python 3.7 or newer and have activated the virtual environment (`source ~/.time_awareness/src/.venv/bin/activate`).
   - **Idle detection not working:**  
     Confirm that `pydbus` is installed and D-Bus is running.  
-    Some desktop environments may not support idle detection; check the log for warnings.
+    Some desktop environments may not support idle detection; check the log for warnings.  
+    Without idle detection the app assumes you are always active, so sessions
+    only end on lock, suspend or quit.
   - **Autostart not working:**  
     Verify that `~/.config/autostart/time_awareness.desktop` exists and is executable.  
     You can test autostart by running `gtk-launch time_awareness` or restarting your session.
+  - **"Time Awareness is already running":**  
+    Another instance already owns tracking, usually because autostart launched it
+    and you started it again by hand. Quit the one in the tray first.
+    The lock is `~/.time_awareness/tracker.lock`; it is released automatically
+    when the owning process exits, including when it is killed.
 
 - **Diagnosing problems:**
   - Run the app from a terminal to see live logs:
@@ -254,6 +330,26 @@ Alternatively, you can manually run these commands:
    ```
 
 This will remove all files and autostart entries created by the quick install script.
+
+## 🧪 Development
+
+Run the test suite from the repository root:
+
+```bash
+python -m pytest tests/ -v
+```
+
+`pygobject` and `pydbus` need system GTK and D-Bus libraries. On a headless
+machine you can install just the subset the core tests need:
+
+```bash
+pip install pytest peewee pillow loguru typer
+```
+
+The GUI tests in `tests/test_app.py` are skipped when `AyatanaAppIndicator3` is
+unavailable; everything else runs without a desktop. See
+[`CLAUDE.md`](CLAUDE.md) for the architecture, the invariants behind the session
+tracking, and the project conventions.
 
 ## 📄 License
 

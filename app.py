@@ -12,6 +12,7 @@ import signal
 import tempfile
 
 from time_awareness import TimeAwareness
+from tracker_lock import TrackerAlreadyRunningError
 
 APP_ID = "time_awareness_tray"
 APP_DIR = Path.home() / ".time_awareness"
@@ -19,7 +20,9 @@ APP_DIR = Path.home() / ".time_awareness"
 def format_duration(td: datetime.timedelta) -> str:
     if td is None:
         return "-"
-    total_seconds = int(td.total_seconds())
+    # Clamp: a negative delta (clock stepped backwards) would otherwise render
+    # as nonsense like "-1h. 59m." because divmod rounds towards -infinity.
+    total_seconds = max(0, int(td.total_seconds()))
     hours, remainder = divmod(total_seconds, 3600)
     minutes = (remainder // 60)
     if hours > 0:
@@ -38,15 +41,33 @@ def format_date(dt: datetime.datetime) -> str:
     return dt.strftime("%d.%m.%Y")
 
 class TrayApp:
-    def __init__(self, update_app_interval: int = 10):
+    def __init__(self, update_app_interval: int = None):
         """
         Initialize the tray application, indicator, and menu.
+
+        Args:
+            update_app_interval (int): Seconds between refreshes. Defaults to the
+                configured tray_refresh_seconds.
+
+        Raises:
+            TrackerAlreadyRunningError: another process already owns tracking.
         """
+        # Started first: it takes the tracking lock, and failing that must not
+        # leave a temporary directory behind.
+        self._ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
+        config = self._ta.config
+
         # Private per-run directory: a fixed /tmp path collides between users
         # and is open to squatting by other accounts.
         self._tmp_icon_dir = Path(tempfile.mkdtemp(prefix="time_awareness_icons_"))
+        self._current_icon_file = None
+        self._quit_done = False
+        # The history dialog renders every session into a single text buffer.
+        # Capping it stops a long-lived database from freezing the UI.
+        self._max_history_rows = config.max_history_rows
 
-        self._ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
+        if update_app_interval is None:
+            update_app_interval = config.tray_refresh_seconds
 
         logger.info("Initializing TrayApp.")
         self.indicator = AppIndicator3.Indicator.new(APP_ID, "", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
@@ -266,7 +287,12 @@ class TrayApp:
             duration = datetime.timedelta(seconds=0)
 
         current_icon_file = self.render_icon(duration)
+        # The icon only changes once a minute while the refresh runs every few
+        # seconds; re-setting the same path makes the indicator redraw for nothing.
+        if current_icon_file == self._current_icon_file:
+            return
         self.indicator.set_icon_full(current_icon_file.as_posix(), "App Icon")
+        self._current_icon_file = current_icon_file
 
     def refresh(self):
         """
@@ -275,8 +301,14 @@ class TrayApp:
         Returns:
             bool: True to continue periodic refresh.
         """
-        self.update_icon()
-        self.update_menu_items()
+        # Never let an exception escape into GLib: an uncaught error in a
+        # timeout callback removes the source, which would silently freeze the
+        # tray icon and menu for the rest of the session.
+        try:
+            self.update_icon()
+            self.update_menu_items()
+        except Exception as e:
+            logger.exception("Tray refresh failed: {}", e)
         return True  # continue timer
 
     def on_disable(self, widget):
@@ -314,8 +346,14 @@ class TrayApp:
             f"Sessions: {number_of_sessions}\n\n"
         )
 
+        shown_sessions = hist['sessions']
+        if self._max_history_rows > 0:
+            shown_sessions = shown_sessions[:self._max_history_rows]
+        if len(shown_sessions) < number_of_sessions:
+            msg += f"Showing the {len(shown_sessions)} most recent sessions.\n\n"
+
         session_lines = []
-        for i, session_info in enumerate(hist['sessions'], start=1):
+        for i, session_info in enumerate(shown_sessions, start=1):
             session_start, session_end, session_duration = session_info
             if session_duration.total_seconds() < 60 * 60 * 24:
                 session_date = f"{format_date(session_start)} {format_time(session_start)}–{format_time(session_end)}"
@@ -368,6 +406,10 @@ class TrayApp:
             self.refresh()
 
     def quit(self):
+        # SIGTERM during shutdown and the Quit menu item can both land here.
+        if self._quit_done:
+            return
+        self._quit_done = True
         self._ta.stop_daemon()  # Stop the daemon thread if running
         logger.info("Cleaning up icons in {}", self._tmp_icon_dir)
         shutil.rmtree(self._tmp_icon_dir, ignore_errors=True)
@@ -380,13 +422,37 @@ class TrayApp:
         self.quit()
         Gtk.main_quit()
 
+def show_error_dialog(text: str, secondary: str = ""):
+    """Report a startup failure to a user who has no terminal to look at."""
+    try:
+        dialog = Gtk.MessageDialog(
+            transient_for=None,
+            modal=True,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text=text,
+        )
+        if secondary:
+            dialog.format_secondary_text(secondary)
+        dialog.run()
+        dialog.destroy()
+    except Exception:
+        logger.exception("Could not show the error dialog.")
+
 def main():
     """
     Entry point for the tray application.
     """
     app = None
     try:
-        app = TrayApp()
+        try:
+            app = TrayApp()
+        except TrackerAlreadyRunningError as e:
+            # Autostart plus a manual launch is the common way to get here.
+            logger.warning("{}", e)
+            show_error_dialog("Time Awareness is already running",
+                              f"{e} Only one instance can track your time at a time.")
+            return
 
         def on_termination_signal():
             logger.info("Termination signal received; quitting.")
@@ -403,11 +469,14 @@ def main():
 
         Gtk.main()
     except KeyboardInterrupt:
-        print("KeyboardInterrupt detected, quitting...")
+        logger.info("KeyboardInterrupt detected, quitting...")
+    except Exception:
+        logger.exception("Unexpected exception in tray app; shutting down.")
+    finally:
+        # Always run cleanup, so a crash still closes and flushes the session
+        # instead of leaving it dangling in the database.
         if app:
             app.quit()
-    except Exception as e:
-        print(f"Unexpected exception: {e}")
 
 if __name__ == "__main__":
     main()

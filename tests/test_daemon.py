@@ -1,4 +1,7 @@
 import datetime
+import threading
+import time
+
 import pytest
 
 import time_awareness
@@ -18,6 +21,9 @@ def fake_monitor():
             self.screen_locked = False
             self._uptime = 1000
             self._idle_time = datetime.timedelta(seconds=0)
+            # Simulates a slow D-Bus round-trip, so a test can reliably call
+            # stop() while the daemon loop is stuck mid-iteration.
+            self._idle_delay = 0.0
             self.subscribe_lock_called = False
             self.subscribe_sleep_called = False
 
@@ -25,6 +31,8 @@ def fake_monitor():
             return self._uptime
 
         def get_idle_time(self):
+            if self._idle_delay:
+                time.sleep(self._idle_delay)
             return self._idle_time
 
         def subscribe_lock_events(self, handler=None):
@@ -61,11 +69,37 @@ def run_one_iteration(daemon):
 # run startup behavior
 # ------------------------------
 def test_run_starts_session_when_none(daemon, fake_monitor):
-    fake_monitor._idle_time = datetime.timedelta(minutes=20)
+    fake_monitor._idle_time = datetime.timedelta(seconds=5)
     daemon._session_manager.current_session = None
     daemon._daemon_stop_event.set()
     daemon.run(poll_interval=0.1, sleep_detection_threshold=1.0)
     assert daemon._session_manager.current_session is not None
+    assert daemon._is_active
+
+
+def test_run_does_not_start_session_when_idle_at_startup(daemon, fake_monitor):
+    """Starting while the user is away must not record a phantom session."""
+    fake_monitor._idle_time = datetime.timedelta(minutes=20)
+    daemon._session_manager.current_session = None
+    daemon._daemon_stop_event.set()
+    daemon.run(poll_interval=0.1, sleep_detection_threshold=1.0)
+    assert daemon._session_manager.current_session is None
+    assert not daemon._is_active
+    assert get_sessions() == []
+
+
+def test_run_resumes_recovered_session_even_when_idle(daemon, fake_monitor):
+    """A session recovered from a previous run survives the idle startup check."""
+    now = datetime.datetime.now()
+    resumed = now - datetime.timedelta(minutes=30)
+    fake_monitor._idle_time = datetime.timedelta(minutes=20)
+    daemon._session_manager.current_session = resumed
+    # Same boot, app gone only briefly -> _recover_stale_session resumes it.
+    set_metadata("last_seen_time", (now - datetime.timedelta(seconds=5)).isoformat())
+    fake_monitor._uptime = 100000
+    daemon._daemon_stop_event.set()
+    daemon.run(poll_interval=0.1, sleep_detection_threshold=1.0)
+    assert daemon._session_manager.current_session == resumed
     assert daemon._is_active
 
 
@@ -79,7 +113,7 @@ def test_run_does_not_start_session_when_locked(daemon, fake_monitor):
 
 
 def test_run_subscribes_lock_and_sleep(daemon, fake_monitor):
-    fake_monitor._idle_time = datetime.timedelta(minutes=20)
+    fake_monitor._idle_time = datetime.timedelta(seconds=5)
     daemon._daemon_stop_event.set()
     daemon.run(poll_interval=0.1, sleep_detection_threshold=1.0)
     assert fake_monitor.subscribe_lock_called
@@ -243,3 +277,42 @@ def test_stop_cleans_up(daemon, fake_monitor):
     daemon.stop()
     assert daemon._session_manager.current_session is None
     assert not daemon._is_active
+
+
+def test_stop_is_idempotent(daemon, fake_monitor):
+    daemon._session_manager.start_session()
+    daemon.stop()
+    sessions_after_first_stop = get_sessions()
+    daemon.stop()
+    # The second stop must not save the session again.
+    assert get_sessions() == sessions_after_first_stop
+
+
+def test_stop_from_other_thread_leaves_no_open_session(session_manager, fake_monitor):
+    """
+    stop() must not close the session while the loop is still free to open a
+    new one: that would leave a dangling session behind on quit.
+    """
+    d = time_awareness.Daemon(session_manager, fake_monitor)
+    fake_monitor._idle_time = datetime.timedelta(seconds=1)  # loop always wants a session
+    # Every iteration spends 0.2s inside the idle check, so stop() below lands
+    # while the loop is mid-iteration and still able to open a new session.
+    fake_monitor._idle_delay = 0.2
+
+    loop = threading.Thread(target=d.run, kwargs={"poll_interval": 0.01})
+    loop.start()
+    try:
+        # Let the loop get going, then stop it from this thread.
+        for _ in range(200):
+            if session_manager.current_session is not None:
+                break
+            time.sleep(0.01)
+        assert session_manager.current_session is not None, "daemon never started a session"
+
+        d.stop()
+    finally:
+        loop.join(timeout=5)
+
+    assert not loop.is_alive()
+    assert session_manager.current_session is None
+    assert not d._is_active

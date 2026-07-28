@@ -20,10 +20,13 @@ try:
 except Exception:
     GLib = None
 
+from config import Config, load_config
+from tracker_lock import TrackerLock
 from database import (
     save_session, get_sessions,
-    set_metadata, get_metadata, get_sessions_since, get_sessions_by_weekday,
-    get_sessions_for_day, get_previous_session, get_days_tracked, configure_database,
+    set_metadata, set_metadata_bulk, get_metadata, get_metadata_bulk,
+    get_previous_session, get_days_tracked, configure_database,
+    get_daily_totals, get_total_for_day, get_average_session_duration,
     create_tables_if_not_exist,
     reset_database
 )
@@ -310,36 +313,39 @@ class SessionManager:
 
     def save_state(self):
         with self._lock:
-            set_metadata("today_total", self.today_total)
-
-            last_update_date = self._last_update_date.isoformat() if self._last_update_date else ""
-            set_metadata("last_update_date", last_update_date)
-
-            current_session = self.current_session.isoformat() if self.current_session else ""
-            set_metadata("current_session", current_session)
+            # One transactional write: the three values describe a single state
+            # and a crash between separate writes could leave them inconsistent.
+            set_metadata_bulk({
+                "today_total": self.today_total,
+                "last_update_date": self._last_update_date.isoformat() if self._last_update_date else "",
+                "current_session": self.current_session.isoformat() if self.current_session else "",
+            })
 
     def load_state(self):
-        try:
-            self.today_total = float(get_metadata("today_total") or 0)
-        except (TypeError, ValueError) as e:
-            logger.error("Failed to parse today_total from metadata: {}", e)
-            self.today_total = 0
+        with self._lock:
+            state = get_metadata_bulk(("today_total", "last_update_date", "current_session"))
 
-        self._last_update_date = None
-        last_date_str = get_metadata("last_update_date", "") or ""
-        if last_date_str:
             try:
-                self._last_update_date = datetime.date.fromisoformat(last_date_str)
-            except ValueError as e:
-                logger.error("Failed to parse last_update_date from metadata: {}", e)
+                self.today_total = float(state.get("today_total") or 0)
+            except (TypeError, ValueError) as e:
+                logger.error("Failed to parse today_total from metadata: {}", e)
+                self.today_total = 0
 
-        self.current_session = None
-        session_str = get_metadata("current_session", "") or ""
-        if session_str:
-            try:
-                self.current_session = datetime.datetime.fromisoformat(session_str)
-            except ValueError as e:
-                logger.error("Failed to parse current_session from metadata: {}", e)
+            self._last_update_date = None
+            last_date_str = state.get("last_update_date") or ""
+            if last_date_str:
+                try:
+                    self._last_update_date = datetime.date.fromisoformat(last_date_str)
+                except ValueError as e:
+                    logger.error("Failed to parse last_update_date from metadata: {}", e)
+
+            self.current_session = None
+            session_str = state.get("current_session") or ""
+            if session_str:
+                try:
+                    self.current_session = datetime.datetime.fromisoformat(session_str)
+                except ValueError as e:
+                    logger.error("Failed to parse current_session from metadata: {}", e)
 
     def check_day_rollover(self):
         with self._lock:
@@ -352,8 +358,7 @@ class SessionManager:
 
             # Sessions are saved split at midnight, so summing today's saved
             # sessions gives the exact total for the new day (usually zero).
-            history = get_sessions_for_day(today)
-            self.today_total = sum((duration.total_seconds() for _, _, duration in history), 0.0)
+            self.today_total = get_total_for_day(today).total_seconds()
 
             self._last_update_date = today
             self.save_state()
@@ -370,7 +375,7 @@ class SessionManager:
 # -------------------------
 class Daemon:
     def __init__(self, session_manager: SessionManager, system_monitor: SystemMonitor,
-                 monitor_lock_and_sleep: bool = True, end_session_idle_threshold: int = 10,
+                 monitor_lock_and_sleep: bool = True, end_session_idle_threshold: float = 10,
                  pump_glib_events: bool = False):
         self._session_manager = session_manager
         self._system_monitor = system_monitor
@@ -384,10 +389,28 @@ class Daemon:
         # dispatch D-Bus signals. Must stay off in the tray app: the GTK main
         # loop owns the default context there.
         self._pump_glib_events_enabled = pump_glib_events
+        # Shutdown handshake: stop() may be called from another thread (the GTK
+        # main thread) or from a signal handler while run() is mid-iteration.
+        self._stopping = False
+        self._loop_thread = None
+        self._loop_finished = threading.Event()
+        self._loop_finished.set()
+        self._finalized = False
+        self._finalize_lock = threading.Lock()
 
     def set_active(self, active: bool):
         """Sync the daemon's activity flag with externally triggered session changes."""
         self._is_active = active
+
+    def enable_glib_event_pump(self):
+        """
+        Pump GLib events from the daemon loop itself.
+
+        Only for standalone (CLI) mode: without a GLib main loop, pydbus signal
+        callbacks for lock/sleep would never be dispatched. Must stay off in the
+        tray app, where the GTK main loop owns the default context.
+        """
+        self._pump_glib_events_enabled = True
 
     def _handle_lock_event(self, locked: bool):
         """
@@ -494,6 +517,12 @@ class Daemon:
 
     def run(self, poll_interval: float = 5.0, sleep_detection_threshold: float = 30.0, verbose: bool = False):
         logger.info("TimeAwareness daemon started. Press Ctrl+C to quit.")
+        # Order matters: once _loop_thread is visible, a concurrent stop() must
+        # already see _loop_finished cleared, or it would skip waiting for us.
+        self._finalized = False
+        self._loop_finished.clear()
+        self._loop_thread = threading.current_thread()
+
         uptime = self._system_monitor.get_system_uptime()
         logger.info(f"System uptime: {datetime.timedelta(seconds=uptime)}")
 
@@ -510,10 +539,21 @@ class Daemon:
             self._is_active = False
             if self._session_manager.current_session:
                 self._session_manager.end_session()
-        else:
+        elif self._session_manager.current_session is not None:
+            # A session recovered by _recover_stale_session is still running.
             self._is_active = True
-            if self._session_manager.current_session is None:
+        else:
+            # Check idle before opening a session: starting the app while the
+            # user is away (autostart, update restart) would otherwise record a
+            # session that the very next poll closes again.
+            idle_time = self._system_monitor.get_idle_time()
+            if idle_time < self._end_session_idle_threshold:
                 self._session_manager.start_session()
+                self._is_active = True
+            else:
+                logger.info("User idle at startup (idle time: {} >= {}); waiting for activity.",
+                            idle_time, self._end_session_idle_threshold)
+                self._is_active = False
 
         try:
             logger.debug("Entering daemon loop.")
@@ -540,6 +580,12 @@ class Daemon:
 
                 self._pump_glib_events()
 
+                # A stop requested from another thread (or a signal handler)
+                # while this iteration was already running must not be followed
+                # by opening a new session below.
+                if self._stopping:
+                    break
+
                 if not (self._monitor_lock_and_sleep and self._system_monitor.screen_locked):
                     idle_time = self._system_monitor.get_idle_time()
                     if verbose:
@@ -561,11 +607,47 @@ class Daemon:
                 set_metadata("last_seen_time", datetime.datetime.now().isoformat())
                 self._daemon_stop_event.wait(poll_interval)
         except KeyboardInterrupt:
-            self.stop()
+            logger.info("Keyboard interrupt received.")
+            self.request_stop()
+        finally:
+            try:
+                # Only finalize for a requested stop: run() is also used to
+                # perform a single startup pass with the stop event pre-set.
+                if self._stopping:
+                    self._finalize()
+            finally:
+                self._loop_thread = None
+                self._loop_finished.set()
+
+    def request_stop(self):
+        """
+        Ask the daemon loop to exit without touching session state.
+
+        Safe to call from a signal handler: it does no database work, which
+        could otherwise re-enter sqlite while the interrupted thread is already
+        inside it.
+        """
+        self._stopping = True
+        self._daemon_stop_event.set()
 
     def stop(self):
         logger.info("Stopping daemon...")
-        self._daemon_stop_event.set()
+        self.request_stop()
+
+        # Let the loop leave its current iteration before closing the session,
+        # otherwise it could open a new one immediately after we closed it.
+        if self._loop_thread is not None and self._loop_thread is not threading.current_thread():
+            if not self._loop_finished.wait(timeout=5.0):
+                logger.warning("Daemon loop did not exit within 5s; finalizing anyway.")
+
+        self._finalize()
+
+    def _finalize(self):
+        """End the running session and flush state. Runs at most once per run()."""
+        with self._finalize_lock:
+            if self._finalized:
+                return
+            self._finalized = True
 
         if self._session_manager.current_session:
             self._session_manager.end_session()
@@ -581,21 +663,46 @@ class Daemon:
 # Main Wrapper App
 # -------------------------
 class TimeAwareness:
-    def __init__(self, app_dir: Path, start_daemon: bool = False, log_to_terminal: bool = False):
-        self._setup_logging_and_db(app_dir, log_to_terminal)
+    def __init__(self, app_dir: Path, start_daemon: bool = False, log_to_terminal: bool = False,
+                 config: Optional[Config] = None):
+        """
+        Args:
+            app_dir (Path): Directory holding the database, log and config file.
+            start_daemon (bool): Start the tracking daemon in a background thread.
+            log_to_terminal (bool): Keep logging to stderr as well as to the log file.
+            config (Config): Settings to use instead of reading config.ini.
+
+        Raises:
+            TrackerAlreadyRunningError: start_daemon was requested while another
+                process already owns session tracking.
+        """
+        self._app_dir = Path(app_dir)
+        self._setup_logging_and_db(self._app_dir, log_to_terminal)
+
+        self._config = config if config is not None else load_config(self._app_dir)
+        self._tracker_lock = TrackerLock(self._app_dir)
 
         self._session_manager = SessionManager()
         self._system_monitor = SystemMonitor()
-        self._daemon = Daemon(self._session_manager, self._system_monitor)
+        self._daemon = Daemon(
+            self._session_manager,
+            self._system_monitor,
+            monitor_lock_and_sleep=self._config.monitor_lock_and_sleep,
+            end_session_idle_threshold=self._config.idle_threshold_minutes,
+        )
 
         self._session_manager.load_state()
 
         self._daemon_thread = None
         if start_daemon:
-            self._daemon_thread = threading.Thread(target=self._daemon.run, daemon=True)
-            self._daemon_thread.start()
+            self.start_daemon()
 
         logger.info("TimeAwarenessApp initialized.")
+
+    @property
+    def config(self) -> Config:
+        """The settings this instance was built with."""
+        return self._config
 
     def _setup_logging_and_db(self, app_dir: Path, log_to_terminal: bool = False):
         logging.getLogger("peewee").setLevel(logging.CRITICAL)
@@ -621,13 +728,20 @@ class TimeAwareness:
         return result
 
     def end_session(self):
+        # Deliberately does not clear the daemon's _is_active flag: that flag
+        # means "the daemon believes the user is at the keyboard", so leaving it
+        # set is what makes the tray's "Disable" stick until the user goes idle.
+        # Clearing it here would make the daemon reopen a session on its very
+        # next poll.
         return self._session_manager.end_session()
 
     def current_session_info(self, verbose: bool = True) -> Optional[
         Tuple[datetime.datetime, datetime.datetime, datetime.timedelta]]:
         if self._session_manager.current_session is None:
             if verbose:
-                logger.warning("No session started.")
+                # Debug, not warning: "no session" is the normal idle state and
+                # the tray polls this every few seconds.
+                logger.debug("No session started.")
             return None
         now = datetime.datetime.now()
         duration = now - self._session_manager.current_session
@@ -639,41 +753,63 @@ class TimeAwareness:
     def days_tracked(self):
         return get_days_tracked()
 
-    def total_time_today(self):
+    def total_time_today(self) -> datetime.timedelta:
+        """Total tracked time today, including the session currently running."""
         self._session_manager.check_day_rollover()
-        return datetime.timedelta(seconds=self._session_manager.today_total)
+        total = datetime.timedelta(seconds=self._session_manager.today_total)
+
+        # today_total only counts sessions already written to the database. The
+        # running session is not stored yet, so add the part of it that falls on
+        # today - otherwise "total today" ignores the time being tracked now.
+        current_session = self._session_manager.current_session
+        if current_session is not None:
+            now = datetime.datetime.now()
+            today_start = datetime.datetime.combine(now.date(), datetime.time.min)
+            running = now - max(current_session, today_start)
+            if running > datetime.timedelta():
+                total += running
+        return total
 
     def total_time_yesterday(self) -> datetime.timedelta:
         yesterday = datetime.datetime.now().date() - datetime.timedelta(days=1)
-        history = get_sessions_for_day(yesterday)
-        total = sum((duration for start, end, duration in history), datetime.timedelta())
-        return total
+        return get_total_for_day(yesterday)
 
     def seven_day_average(self) -> datetime.timedelta:
-        seven_days_ago = datetime.datetime.now() - datetime.timedelta(days=7)
-        history = get_sessions_since(seven_days_ago)
-        total = sum((duration for start, end, duration in history), datetime.timedelta())
-        days_count = len({start.date() for start, end, duration in history})
-        if days_count == 0:
+        """
+        Average tracked time per day over the last 7 calendar days.
+
+        Averaged over the days that actually have tracked time, so days off do
+        not drag the number down.
+        """
+        today = datetime.datetime.now().date()
+        # Calendar days, not "now minus 168 hours": a time-based cut-off drops
+        # the earlier part of the oldest day while still counting it as a day.
+        daily_totals = get_daily_totals(since=today - datetime.timedelta(days=6))
+        if not daily_totals:
             return datetime.timedelta()
-        return total / days_count
+        return sum(daily_totals.values(), datetime.timedelta()) / len(daily_totals)
 
     def weekday_average(self) -> datetime.timedelta:
-        weekday_histories = get_sessions_by_weekday()
-        averages = []
-        for durations in weekday_histories.values():
-            if durations:
-                averages.append(sum(durations, datetime.timedelta()) / len(durations))
+        """
+        Average daily total, macro-averaged over the weekdays that have data.
+
+        Each weekday contributes its own average daily total, so a weekday with
+        many tracked days does not outweigh the others.
+        """
+        daily_totals = get_daily_totals()
+        by_weekday = {}
+        for day, total in daily_totals.items():
+            by_weekday.setdefault(day.weekday(), []).append(total)
+
+        averages = [sum(totals, datetime.timedelta()) / len(totals)
+                    for totals in by_weekday.values() if totals]
         if not averages:
             return datetime.timedelta()
         return sum(averages, datetime.timedelta()) / len(averages)
 
     def total_average(self) -> datetime.timedelta:
-        history = get_sessions()
-        if not history:
-            return datetime.timedelta()
-        total = sum((duration for start, end, duration in history), datetime.timedelta())
-        return total / len(history)
+        """Average duration of a single session across all history."""
+        return get_average_session_duration()
 
     def history(self, count_sessions: bool = False):
         return {
@@ -692,10 +828,73 @@ class TimeAwareness:
         logger.info("Database reset: all data cleared.")
         self.start_session()
 
+    def reload_state(self):
+        """Re-read session state written by another process (e.g. the daemon)."""
+        self._session_manager.load_state()
+
+    def start_daemon(self):
+        """
+        Start the tracking daemon in a background thread.
+
+        Raises:
+            TrackerAlreadyRunningError: another process already owns tracking.
+        """
+        if self._daemon_thread is not None and self._daemon_thread.is_alive():
+            logger.info("Daemon thread is already running.")
+            return
+
+        self._tracker_lock.acquire()
+        self._daemon_thread = threading.Thread(target=self._run_daemon_loop, daemon=True)
+        self._daemon_thread.start()
+
+    def run_daemon(self, pump_glib_events: bool = False):
+        """
+        Run the tracking daemon in the calling thread until it is stopped.
+
+        Args:
+            pump_glib_events (bool): Dispatch GLib events from the loop itself.
+                Required without a GLib main loop (CLI); must stay off under GTK.
+
+        Raises:
+            TrackerAlreadyRunningError: another process already owns tracking.
+        """
+        self._tracker_lock.acquire()
+        try:
+            self._run_daemon_loop(pump_glib_events=pump_glib_events)
+        finally:
+            self._tracker_lock.release()
+
+    def request_daemon_stop(self):
+        """
+        Ask the daemon loop to exit. Safe to call from a signal handler.
+
+        The session is closed by the loop itself once it leaves the iteration it
+        was interrupted in, so no database call is re-entered.
+        """
+        self._daemon.request_stop()
+
+    def _run_daemon_loop(self, pump_glib_events: bool = False):
+        if pump_glib_events:
+            self._daemon.enable_glib_event_pump()
+        self._daemon.run(
+            poll_interval=self._config.poll_interval_seconds,
+            sleep_detection_threshold=self._config.sleep_detection_threshold_seconds,
+            verbose=self._config.verbose,
+        )
+
     def stop_daemon(self):
-        if self._daemon_thread and self._daemon_thread.is_alive():
+        try:
+            if self._daemon_thread is None:
+                logger.info("No active daemon thread to stop.")
+                return
+
+            # Stop unconditionally, even if the thread already died: the running
+            # session still has to be closed and flushed.
             self._daemon.stop()
             self._daemon_thread.join(timeout=5)
-            logger.info("Daemon thread joined successfully.")
-        else:
-            logger.info("No active daemon thread to stop.")
+            if self._daemon_thread.is_alive():
+                logger.warning("Daemon thread did not exit within 5s.")
+            else:
+                logger.info("Daemon thread joined successfully.")
+        finally:
+            self._tracker_lock.release()

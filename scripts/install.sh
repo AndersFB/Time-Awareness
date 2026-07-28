@@ -60,6 +60,10 @@ if command -v apt-get >/dev/null 2>&1; then
   echo -n "Step 1: Update package list and install required packages using apt-get (requires sudo, you may be asked for your password)."
   ask_proceed
 
+  # Authenticate before backgrounding anything: a sudo password prompt from a
+  # background job competes with the spinner and looks like a hang.
+  sudo -v || { echo "sudo authentication failed."; exit 1; }
+
   sudo apt-get update -qq &
   spinner $! "Updating package list"
 
@@ -88,6 +92,10 @@ elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
 
   echo -n "Step 1: Install required packages using dnf (requires sudo, you may be asked for your password)."
   ask_proceed
+
+  # Authenticate before backgrounding anything: a sudo password prompt from a
+  # background job competes with the spinner and looks like a hang.
+  sudo -v || { echo "sudo authentication failed."; exit 1; }
 
   if ! sudo dnf repolist enabled | grep -q '^crb'; then
     sudo dnf config-manager --set-enabled crb && sudo dnf makecache >/dev/null 2>&1 &
@@ -135,29 +143,33 @@ else
   spinner $! "Cloning repository to $INSTALL_DIR"
 
   cd "$INSTALL_DIR" || { printf "\nFailed to change directory to $INSTALL_DIR\n" > /dev/tty; exit 1; }
+fi
 
-  if command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
-    EXT_STATUS=$(gnome-extensions info appindicatorsupport@rgcjonas.gmail.com 2>/dev/null | grep -F 'Enabled:' | awk '{print $2}')
-    if [ "$EXT_STATUS" != "Yes" ]; then
-      gnome-extensions install "$INSTALL_DIR/libs/appindicatorsupportrgcjonas.gmail.com.v60.shell-extension.zip" >/dev/null 2>&1 &
-      spinner $! "Installing appindicator GNOME extension"
+# Outside the clone/pull branches so that re-running the installer repairs a
+# previous run that was interrupted before these steps completed.
+if command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+  EXT_STATUS=$(gnome-extensions info appindicatorsupport@rgcjonas.gmail.com 2>/dev/null | grep -F 'Enabled:' | awk '{print $2}')
+  if [ "$EXT_STATUS" != "Yes" ]; then
+    gnome-extensions install "$INSTALL_DIR/libs/appindicatorsupportrgcjonas.gmail.com.v60.shell-extension.zip" >/dev/null 2>&1 &
+    spinner $! "Installing appindicator GNOME extension"
 
-      echo "[NOTICE] Before you can enable the extension you may need to log out and log back in again or restart you computer."
+    echo "[NOTICE] Before you can enable the extension you may need to log out and log back in again or restart you computer."
 
-      gnome-extensions enable "appindicatorsupport@rgcjonas.gmail.com" >/dev/null 2>&1 &
-      spinner $! "Enabling appindicator GNOME extension"
-    fi
-
-    EXT_STATUS=$(gnome-extensions info appindicatorsupport@rgcjonas.gmail.com 2>/dev/null | grep -F 'Enabled:' | awk '{print $2}')
-    if [ "$EXT_STATUS" != "Yes" ]; then
-      echo
-      echo "[WARNING] The appindicator GNOME extension is still not enabled!"
-      echo "[WARNING] The app will not work correctly without this extension."
-      echo "[WARNING] Try to log out and back in again or restart you computer and then rerun the install script."
-      exit 1
-    fi
+    gnome-extensions enable "appindicatorsupport@rgcjonas.gmail.com" >/dev/null 2>&1 &
+    spinner $! "Enabling appindicator GNOME extension"
   fi
 
+  EXT_STATUS=$(gnome-extensions info appindicatorsupport@rgcjonas.gmail.com 2>/dev/null | grep -F 'Enabled:' | awk '{print $2}')
+  if [ "$EXT_STATUS" != "Yes" ]; then
+    echo
+    echo "[WARNING] The appindicator GNOME extension is still not enabled!"
+    echo "[WARNING] The app will not work correctly without this extension."
+    echo "[WARNING] Try to log out and back in again or restart you computer and then rerun the install script."
+    exit 1
+  fi
+fi
+
+if [ ! -x "$INSTALL_DIR/.venv/bin/python" ]; then
   python3 -m venv .venv >/dev/null 2>&1 &
   spinner $! "Creating virtual environment in $INSTALL_DIR/.venv"
 fi
@@ -173,7 +185,9 @@ spinner $! "Upgrading pip"
 
 PIP_REQUIREMENTS_FILE="requirements.txt"
 
-if ! dpkg -s libgirepository-2.0-dev &>/dev/null; then
+# Only meaningful on Debian/Ubuntu. Without the dpkg guard this test also fails
+# on RHEL/Fedora (where dpkg does not exist) and needlessly pins PyGObject there.
+if command -v dpkg >/dev/null 2>&1 && ! dpkg -s libgirepository-2.0-dev &>/dev/null; then
   echo "Pinning PyGObject to 3.50.1 due to missing libgirepository-2.0-dev."
   sed 's/^pygobject.*/pygobject==3.50.1/' requirements.txt > requirements_pinned.txt || { printf "\nFailed to pin PyGObject version\n" > /dev/tty; exit 1; }
   PIP_REQUIREMENTS_FILE="requirements_pinned.txt"

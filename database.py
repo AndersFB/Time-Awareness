@@ -1,10 +1,10 @@
 import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any, List, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from loguru import logger
-from peewee import SqliteDatabase, Model, DateTimeField, FloatField, TextField, DatabaseProxy
+from peewee import SqliteDatabase, Model, DateTimeField, FloatField, TextField, DatabaseProxy, fn
 
 database_proxy = DatabaseProxy()
 
@@ -47,6 +47,25 @@ def configure_database(database: Path):
     database_proxy.initialize(db)
     logger.info("Database configured successfully: {}", database)
     return db
+
+def _as_date(value: Any) -> Optional[datetime.date]:
+    """
+    Normalise a value returned for an SQL ``date(...)`` expression to a date.
+
+    Depending on the field converters peewee applies, the value comes back as a
+    ``datetime``, a ``date`` or the raw ``YYYY-MM-DD`` string.
+    """
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
 
 def with_database(func):
     """
@@ -177,6 +196,54 @@ def get_metadata(key: str, default: Any = None):
         return default
 
 @with_database
+def set_metadata_bulk(items: Dict[str, Any]) -> bool:
+    """
+    Set several metadata key-value pairs in a single transaction.
+
+    Writing related state (e.g. the whole SessionManager state) through one call
+    keeps it atomic and costs one connection instead of one per key.
+
+    Args:
+        items (dict): Mapping of metadata key to value.
+
+    Returns:
+        bool: True if set successfully, False otherwise.
+    """
+    if not items:
+        return True
+    try:
+        rows = [{"key": key, "value": str(value)} for key, value in items.items()]
+        with database_proxy.obj.atomic():
+            MetaData.insert_many(rows).on_conflict_replace().execute()
+        logger.debug("Metadata set: {}", items)
+        return True
+    except Exception as e:
+        logger.error("Failed to set metadata {}: {}", list(items), e)
+        return False
+
+@with_database
+def get_metadata_bulk(keys: Iterable[str]) -> Dict[str, str]:
+    """
+    Get several metadata values in a single query.
+
+    Args:
+        keys (iterable): Metadata keys to fetch.
+
+    Returns:
+        dict: Mapping of key to value for the keys that exist.
+    """
+    keys = list(keys)
+    if not keys:
+        return {}
+    try:
+        found = {m.key: m.value for m in MetaData.select().where(MetaData.key.in_(keys))}
+        logger.debug("Metadata fetched: {}", found)
+        return found
+    except Exception as e:
+        logger.error("Failed to get metadata {}: {}", keys, e)
+        return {}
+
+@with_database
 def get_sessions_since(since_dt: datetime.datetime):
     """
     Get sessions started since a given datetime.
@@ -209,7 +276,7 @@ def get_sessions_by_weekday():
     """
     try:
         weekday_histories = {}
-        for s in Session.select():
+        for s in Session.select(Session.start, Session.duration):
             weekday = s.start.weekday()
             duration = datetime.timedelta(seconds=s.duration)
             if weekday not in weekday_histories:
@@ -220,6 +287,79 @@ def get_sessions_by_weekday():
     except Exception as e:
         logger.error("Failed to fetch sessions by weekday: {}", e)
         return {}
+
+@with_database
+def get_daily_totals(since: Optional[datetime.date] = None) -> Dict[datetime.date, datetime.timedelta]:
+    """
+    Get the total tracked time per calendar day, aggregated in SQL.
+
+    Sessions are stored split at midnight, so grouping by the start date yields
+    exact daily totals. Aggregating in SQL keeps statistics O(days) instead of
+    loading every session row into Python.
+
+    Args:
+        since (date): Only include days on or after this date. None for all days.
+
+    Returns:
+        dict: Mapping of date to total duration.
+    """
+    try:
+        day = fn.DATE(Session.start)
+        query = Session.select(day.alias("day"), fn.SUM(Session.duration).alias("total")).group_by(day)
+        if since is not None:
+            query = query.where(Session.start >= datetime.datetime.combine(since, datetime.time.min))
+        totals = {}
+        for row in query.dicts():
+            day_value = _as_date(row["day"])
+            if day_value is None:
+                logger.warning("Skipping daily total with unparsable day: {}", row["day"])
+                continue
+            totals[day_value] = datetime.timedelta(seconds=float(row["total"] or 0))
+        logger.debug("Fetched daily totals for {} day(s)", len(totals))
+        return totals
+    except Exception as e:
+        logger.error("Failed to fetch daily totals: {}", e)
+        return {}
+
+@with_database
+def get_total_for_day(day: datetime.date) -> datetime.timedelta:
+    """
+    Get the total tracked time for a single day, summed in SQL.
+
+    Args:
+        day (date): The day to total.
+
+    Returns:
+        timedelta: Total tracked time for that day (zero if none).
+    """
+    try:
+        start_dt = datetime.datetime.combine(day, datetime.time.min)
+        end_dt = datetime.datetime.combine(day, datetime.time.max)
+        total = (Session
+                 .select(fn.SUM(Session.duration))
+                 .where((Session.start >= start_dt) & (Session.start <= end_dt))
+                 .scalar())
+        logger.debug("Fetched total for {}: {}", day, total)
+        return datetime.timedelta(seconds=float(total or 0))
+    except Exception as e:
+        logger.error("Failed to fetch total for '{}': {}", day, e)
+        return datetime.timedelta()
+
+@with_database
+def get_average_session_duration() -> datetime.timedelta:
+    """
+    Get the mean duration across all stored sessions, averaged in SQL.
+
+    Returns:
+        timedelta: Average session duration (zero if there are no sessions).
+    """
+    try:
+        average = Session.select(fn.AVG(Session.duration)).scalar()
+        logger.debug("Fetched average session duration: {}", average)
+        return datetime.timedelta(seconds=float(average or 0))
+    except Exception as e:
+        logger.error("Failed to fetch average session duration: {}", e)
+        return datetime.timedelta()
 
 @with_database
 def get_sessions_for_day(day: datetime.date):
@@ -287,11 +427,11 @@ def get_days_tracked():
         int: Number of days tracked.
     """
     try:
-        days = set()
-        for s in Session.select(Session.start):
-            days.add(s.start.date())
-        logger.debug("Fetched days tracked: {}", len(days))
-        return len(days)
+        # Counted in SQL: loading every session row just to count distinct dates
+        # grows linearly with history size for a number that never changes shape.
+        days = Session.select(fn.COUNT(fn.DISTINCT(fn.DATE(Session.start)))).scalar()
+        logger.debug("Fetched days tracked: {}", days)
+        return int(days or 0)
     except Exception as e:
         logger.error("Failed to fetch days tracked: {}", e)
         return 0

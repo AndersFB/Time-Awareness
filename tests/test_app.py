@@ -8,7 +8,7 @@ def ayatana_available():
         import gi
         gi.require_version('AyatanaAppIndicator3', '0.1')
         from gi.repository import AyatanaAppIndicator3
-        return True
+        return AyatanaAppIndicator3 is not None
     except Exception:
         return False
 
@@ -53,5 +53,39 @@ def test_tray_app_init(use_in_memory_db, monkeypatch, tmp_path):
     import app
     monkeypatch.setattr(app, 'APP_DIR', tmp_path)
     tray_app = app.TrayApp(update_app_interval=1)
-    assert isinstance(tray_app, app.TrayApp)
-    assert hasattr(tray_app, "indicator")
+    try:
+        assert isinstance(tray_app, app.TrayApp)
+        assert hasattr(tray_app, "indicator")
+    finally:
+        # Stops the daemon thread, releases the tracking lock and removes the
+        # temporary icon directory.
+        tray_app.quit()
+
+
+def test_tray_app_uses_configured_refresh_interval(use_in_memory_db, monkeypatch, tmp_path):
+    import app
+    from config import CONFIG_FILENAME
+
+    monkeypatch.setattr(app, 'APP_DIR', tmp_path)
+    (tmp_path / CONFIG_FILENAME).write_text(
+        "[time_awareness]\ntray_refresh_seconds = 7\nmax_history_rows = 12\n", encoding="utf-8")
+
+    tray_app = app.TrayApp()
+    try:
+        assert tray_app._max_history_rows == 12
+        assert tray_app._ta.config.tray_refresh_seconds == 7
+    finally:
+        tray_app.quit()
+
+
+def test_second_tray_app_is_refused(use_in_memory_db, monkeypatch, tmp_path):
+    import app
+    from tracker_lock import TrackerAlreadyRunningError
+
+    monkeypatch.setattr(app, 'APP_DIR', tmp_path)
+    first = app.TrayApp(update_app_interval=1)
+    try:
+        with pytest.raises(TrackerAlreadyRunningError):
+            app.TrayApp(update_app_interval=1)
+    finally:
+        first.quit()
