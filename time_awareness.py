@@ -20,6 +20,8 @@ try:
 except Exception:
     GLib = None
 
+from config import Config, load_config
+from tracker_lock import TrackerLock
 from database import (
     save_session, get_sessions,
     set_metadata, set_metadata_bulk, get_metadata, get_metadata_bulk,
@@ -373,7 +375,7 @@ class SessionManager:
 # -------------------------
 class Daemon:
     def __init__(self, session_manager: SessionManager, system_monitor: SystemMonitor,
-                 monitor_lock_and_sleep: bool = True, end_session_idle_threshold: int = 10,
+                 monitor_lock_and_sleep: bool = True, end_session_idle_threshold: float = 10,
                  pump_glib_events: bool = False):
         self._session_manager = session_manager
         self._system_monitor = system_monitor
@@ -661,21 +663,46 @@ class Daemon:
 # Main Wrapper App
 # -------------------------
 class TimeAwareness:
-    def __init__(self, app_dir: Path, start_daemon: bool = False, log_to_terminal: bool = False):
-        self._setup_logging_and_db(app_dir, log_to_terminal)
+    def __init__(self, app_dir: Path, start_daemon: bool = False, log_to_terminal: bool = False,
+                 config: Optional[Config] = None):
+        """
+        Args:
+            app_dir (Path): Directory holding the database, log and config file.
+            start_daemon (bool): Start the tracking daemon in a background thread.
+            log_to_terminal (bool): Keep logging to stderr as well as to the log file.
+            config (Config): Settings to use instead of reading config.ini.
+
+        Raises:
+            TrackerAlreadyRunningError: start_daemon was requested while another
+                process already owns session tracking.
+        """
+        self._app_dir = Path(app_dir)
+        self._setup_logging_and_db(self._app_dir, log_to_terminal)
+
+        self._config = config if config is not None else load_config(self._app_dir)
+        self._tracker_lock = TrackerLock(self._app_dir)
 
         self._session_manager = SessionManager()
         self._system_monitor = SystemMonitor()
-        self._daemon = Daemon(self._session_manager, self._system_monitor)
+        self._daemon = Daemon(
+            self._session_manager,
+            self._system_monitor,
+            monitor_lock_and_sleep=self._config.monitor_lock_and_sleep,
+            end_session_idle_threshold=self._config.idle_threshold_minutes,
+        )
 
         self._session_manager.load_state()
 
         self._daemon_thread = None
         if start_daemon:
-            self._daemon_thread = threading.Thread(target=self._daemon.run, daemon=True)
-            self._daemon_thread.start()
+            self.start_daemon()
 
         logger.info("TimeAwarenessApp initialized.")
+
+    @property
+    def config(self) -> Config:
+        """The settings this instance was built with."""
+        return self._config
 
     def _setup_logging_and_db(self, app_dir: Path, log_to_terminal: bool = False):
         logging.getLogger("peewee").setLevel(logging.CRITICAL)
@@ -801,16 +828,73 @@ class TimeAwareness:
         logger.info("Database reset: all data cleared.")
         self.start_session()
 
-    def stop_daemon(self):
-        if self._daemon_thread is None:
-            logger.info("No active daemon thread to stop.")
+    def reload_state(self):
+        """Re-read session state written by another process (e.g. the daemon)."""
+        self._session_manager.load_state()
+
+    def start_daemon(self):
+        """
+        Start the tracking daemon in a background thread.
+
+        Raises:
+            TrackerAlreadyRunningError: another process already owns tracking.
+        """
+        if self._daemon_thread is not None and self._daemon_thread.is_alive():
+            logger.info("Daemon thread is already running.")
             return
 
-        # Stop unconditionally, even if the thread already died: the running
-        # session still has to be closed and flushed.
-        self._daemon.stop()
-        self._daemon_thread.join(timeout=5)
-        if self._daemon_thread.is_alive():
-            logger.warning("Daemon thread did not exit within 5s.")
-        else:
-            logger.info("Daemon thread joined successfully.")
+        self._tracker_lock.acquire()
+        self._daemon_thread = threading.Thread(target=self._run_daemon_loop, daemon=True)
+        self._daemon_thread.start()
+
+    def run_daemon(self, pump_glib_events: bool = False):
+        """
+        Run the tracking daemon in the calling thread until it is stopped.
+
+        Args:
+            pump_glib_events (bool): Dispatch GLib events from the loop itself.
+                Required without a GLib main loop (CLI); must stay off under GTK.
+
+        Raises:
+            TrackerAlreadyRunningError: another process already owns tracking.
+        """
+        self._tracker_lock.acquire()
+        try:
+            self._run_daemon_loop(pump_glib_events=pump_glib_events)
+        finally:
+            self._tracker_lock.release()
+
+    def request_daemon_stop(self):
+        """
+        Ask the daemon loop to exit. Safe to call from a signal handler.
+
+        The session is closed by the loop itself once it leaves the iteration it
+        was interrupted in, so no database call is re-entered.
+        """
+        self._daemon.request_stop()
+
+    def _run_daemon_loop(self, pump_glib_events: bool = False):
+        if pump_glib_events:
+            self._daemon.enable_glib_event_pump()
+        self._daemon.run(
+            poll_interval=self._config.poll_interval_seconds,
+            sleep_detection_threshold=self._config.sleep_detection_threshold_seconds,
+            verbose=self._config.verbose,
+        )
+
+    def stop_daemon(self):
+        try:
+            if self._daemon_thread is None:
+                logger.info("No active daemon thread to stop.")
+                return
+
+            # Stop unconditionally, even if the thread already died: the running
+            # session still has to be closed and flushed.
+            self._daemon.stop()
+            self._daemon_thread.join(timeout=5)
+            if self._daemon_thread.is_alive():
+                logger.warning("Daemon thread did not exit within 5s.")
+            else:
+                logger.info("Daemon thread joined successfully.")
+        finally:
+            self._tracker_lock.release()

@@ -14,6 +14,8 @@ Time-Awareness is a Linux desktop productivity tool that tracks computer usage s
 ├── main.py             # CLI application using Typer
 ├── time_awareness.py   # Core logic: TimeAwareness, SessionManager, SystemMonitor, Daemon
 ├── database.py         # Peewee ORM models and database operations
+├── config.py           # Config dataclass and config.ini loading/validation
+├── tracker_lock.py     # flock-based single-owner lock for session tracking
 ├── requirements.txt    # Python dependencies
 ├── CLAUDE.md           # Architecture notes, invariants, and conventions
 ├── scripts/            # Installation/update/uninstall shell scripts
@@ -27,6 +29,8 @@ Time-Awareness is a Linux desktop productivity tool that tracks computer usage s
 │   ├── test_system_monitor.py
 │   ├── test_daemon.py
 │   ├── test_time_awareness.py
+│   ├── test_config.py
+│   ├── test_tracker_lock.py
 │   └── test_app.py     # GUI tests (skip without AyatanaAppIndicator3)
 └── libs/               # GNOME extension for Fedora/CentOS tray support
 ```
@@ -83,10 +87,13 @@ python main.py daemon     # Run the daemon in the foreground
 python main.py reset      # Delete all sessions and metadata (prompts first)
 ```
 
-**Note:** The CLI and the tray app are separate processes sharing one SQLite
-file, each with its own in-memory session state. Running `start`/`stop`/`reset`
-while the tray app is running lets the two overwrite each other's current
-session. The read-only commands are safe to use alongside it.
+**Note:** Only one process may track at a time, enforced by an `flock` on
+`~/.time_awareness/tracker.lock`. `start`, `stop` and `reset` refuse to run while
+the tray app or another daemon is tracking (`--force` overrides); `current`,
+`live` and `history` are read-only and always allowed.
+
+**Settings** live in `~/.time_awareness/config.ini`, created with commented
+defaults on first run. See `config.py` for the fields and their bounds.
 
 ## Key Dependencies
 
@@ -108,9 +115,16 @@ session. The read-only commands are safe to use alongside it.
 - **Daemon** (`time_awareness.py`): Background thread for idle detection and automatic session management
 - **TrayApp** (`app.py`): GTK tray icon with menu, icon rendering, and user interactions
 
-Database files are stored in `~/.time_awareness/`:
+Entry points drive the daemon through `TimeAwareness`'s public API
+(`start_daemon`, `run_daemon`, `request_daemon_stop`, `stop_daemon`,
+`reload_state`, `config`) rather than reaching into `_daemon` or
+`_session_manager`.
+
+Runtime files are stored in `~/.time_awareness/`:
 - `timeawareness.sqlite` - Session data
 - `timeawareness.log` - Application logs
+- `config.ini` - User settings
+- `tracker.lock` - Single-tracker lock
 
 **`CLAUDE.md` in the repository root documents the invariants that are easy to
 break** - the suspend-aware clock choice, midnight splitting, `last_seen_time`

@@ -20,6 +20,8 @@ Time Awareness is a productivity tool that tracks your computer usage sessions, 
 - Session history and statistics (daily totals, averages, etc.).
 - Persistent state and logging.
 - Command line interface alongside the tray applet.
+- Configurable through a plain `config.ini`; only one instance tracks at a time,
+  so the tray app and the CLI can never overwrite each other's session.
 
 ## 🛠️ Requirements
 
@@ -226,17 +228,48 @@ python main.py daemon      # run the tracker in the foreground, without a GUI
 python main.py reset       # delete all data (asks for confirmation)
 ```
 
-> **Note:** The tray app and the CLI are separate processes that each keep their
-> own view of the running session. Use `current`, `live` and `history` freely
-> while the tray app is running; `start`, `stop`, `daemon` and `reset` should not
-> be used at the same time as the tray app, since the two will overwrite each
-> other's session state.
+Only one process may track your time at a time, so the tray app and a CLI daemon
+cannot fight over the same session. `current`, `live` and `history` are
+read-only and always work. `start`, `stop` and `reset` refuse to run while the
+tray app is tracking, since they would overwrite the session it holds:
+
+```
+$ python main.py stop
+Time Awareness is already tracking in another process (PID 4711).
+'stop' would overwrite the session that process is tracking.
+Use the tray menu instead, or pass --force to do it anyway.
+```
+
+Pass `--force` if you really want to override.
+
+## ⚙️ Configuration
+
+Settings live in `~/.time_awareness/config.ini`, which is created with the
+defaults and a comment for each setting the first time the app runs. Edit it and
+restart the app; delete it to go back to the defaults.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `idle_threshold_minutes` | `10` | Minutes without keyboard or mouse activity before the session ends |
+| `poll_interval_seconds` | `5` | How often idle time is checked |
+| `sleep_detection_threshold_seconds` | `30` | A gap larger than this between two checks counts as the machine having been suspended |
+| `monitor_lock_and_sleep` | `true` | End the session on screen lock and suspend, resume on unlock (needs D-Bus) |
+| `tray_refresh_seconds` | `10` | How often the tray icon and menu update |
+| `max_history_rows` | `500` | Sessions listed in the History dialog; `0` for no limit |
+| `verbose` | `false` | Log every idle check, for troubleshooting |
+
+Bad values do not stop the app: anything unparsable falls back to its default,
+values below a sensible minimum are raised to it, and
+`sleep_detection_threshold_seconds` is pushed above `poll_interval_seconds` if
+you set it lower (otherwise every ordinary check would look like a suspend). All
+corrections are logged.
 
 ## 🧩 Troubleshooting
 
 - **Log file:**  
   All errors and activity are logged to `~/.time_awareness/timeawareness.log`.  
   Check this file for details if the app fails to start or behaves unexpectedly.
+  Set `verbose = true` in `config.ini` for per-check detail.
 
 - **Common issues:**
   - **Missing tray icon:**  
@@ -252,6 +285,11 @@ python main.py reset       # delete all data (asks for confirmation)
   - **Autostart not working:**  
     Verify that `~/.config/autostart/time_awareness.desktop` exists and is executable.  
     You can test autostart by running `gtk-launch time_awareness` or restarting your session.
+  - **"Time Awareness is already running":**  
+    Another instance already owns tracking, usually because autostart launched it
+    and you started it again by hand. Quit the one in the tray first.
+    The lock is `~/.time_awareness/tracker.lock`; it is released automatically
+    when the owning process exits, including when it is killed.
 
 - **Diagnosing problems:**
   - Run the app from a terminal to see live logs:

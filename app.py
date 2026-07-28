@@ -12,13 +12,10 @@ import signal
 import tempfile
 
 from time_awareness import TimeAwareness
+from tracker_lock import TrackerAlreadyRunningError
 
 APP_ID = "time_awareness_tray"
 APP_DIR = Path.home() / ".time_awareness"
-
-# The history dialog renders every session into a single text buffer. Cap it so
-# a long-lived database cannot freeze the UI for seconds when the menu is used.
-MAX_HISTORY_ROWS = 500
 
 def format_duration(td: datetime.timedelta) -> str:
     if td is None:
@@ -44,17 +41,33 @@ def format_date(dt: datetime.datetime) -> str:
     return dt.strftime("%d.%m.%Y")
 
 class TrayApp:
-    def __init__(self, update_app_interval: int = 10):
+    def __init__(self, update_app_interval: int = None):
         """
         Initialize the tray application, indicator, and menu.
+
+        Args:
+            update_app_interval (int): Seconds between refreshes. Defaults to the
+                configured tray_refresh_seconds.
+
+        Raises:
+            TrackerAlreadyRunningError: another process already owns tracking.
         """
+        # Started first: it takes the tracking lock, and failing that must not
+        # leave a temporary directory behind.
+        self._ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
+        config = self._ta.config
+
         # Private per-run directory: a fixed /tmp path collides between users
         # and is open to squatting by other accounts.
         self._tmp_icon_dir = Path(tempfile.mkdtemp(prefix="time_awareness_icons_"))
         self._current_icon_file = None
         self._quit_done = False
+        # The history dialog renders every session into a single text buffer.
+        # Capping it stops a long-lived database from freezing the UI.
+        self._max_history_rows = config.max_history_rows
 
-        self._ta = TimeAwareness(APP_DIR, start_daemon=True, log_to_terminal=True)
+        if update_app_interval is None:
+            update_app_interval = config.tray_refresh_seconds
 
         logger.info("Initializing TrayApp.")
         self.indicator = AppIndicator3.Indicator.new(APP_ID, "", AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
@@ -333,7 +346,9 @@ class TrayApp:
             f"Sessions: {number_of_sessions}\n\n"
         )
 
-        shown_sessions = hist['sessions'][:MAX_HISTORY_ROWS]
+        shown_sessions = hist['sessions']
+        if self._max_history_rows > 0:
+            shown_sessions = shown_sessions[:self._max_history_rows]
         if len(shown_sessions) < number_of_sessions:
             msg += f"Showing the {len(shown_sessions)} most recent sessions.\n\n"
 
@@ -407,13 +422,37 @@ class TrayApp:
         self.quit()
         Gtk.main_quit()
 
+def show_error_dialog(text: str, secondary: str = ""):
+    """Report a startup failure to a user who has no terminal to look at."""
+    try:
+        dialog = Gtk.MessageDialog(
+            transient_for=None,
+            modal=True,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text=text,
+        )
+        if secondary:
+            dialog.format_secondary_text(secondary)
+        dialog.run()
+        dialog.destroy()
+    except Exception:
+        logger.exception("Could not show the error dialog.")
+
 def main():
     """
     Entry point for the tray application.
     """
     app = None
     try:
-        app = TrayApp()
+        try:
+            app = TrayApp()
+        except TrackerAlreadyRunningError as e:
+            # Autostart plus a manual launch is the common way to get here.
+            logger.warning("{}", e)
+            show_error_dialog("Time Awareness is already running",
+                              f"{e} Only one instance can track your time at a time.")
+            return
 
         def on_termination_signal():
             logger.info("Termination signal received; quitting.")

@@ -2,7 +2,9 @@ import datetime
 import pytest
 
 import time_awareness
-from database import save_session
+from config import CONFIG_FILENAME, Config
+from database import save_session, set_metadata_bulk
+from tracker_lock import TrackerAlreadyRunningError, owner_pid
 
 
 @pytest.fixture
@@ -202,5 +204,121 @@ def test_stop_daemon_no_thread(app):
 
 def test_daemon_thread_start_and_stop(tmp_path, use_in_memory_db):
     app = time_awareness.TimeAwareness(app_dir=tmp_path, start_daemon=True, log_to_terminal=True)
-    assert app._daemon_thread.is_alive()
-    app.stop_daemon()
+    try:
+        assert app._daemon_thread.is_alive()
+    finally:
+        app.stop_daemon()
+
+
+def test_start_daemon_twice_is_a_noop(tmp_path, use_in_memory_db):
+    app = time_awareness.TimeAwareness(app_dir=tmp_path, start_daemon=True, log_to_terminal=True)
+    try:
+        thread = app._daemon_thread
+        app.start_daemon()
+        assert app._daemon_thread is thread
+    finally:
+        app.stop_daemon()
+
+
+# ------------------------------
+# Configuration
+# ------------------------------
+def test_config_is_read_from_the_app_dir(tmp_path, use_in_memory_db):
+    (tmp_path / CONFIG_FILENAME).write_text(
+        "[time_awareness]\nidle_threshold_minutes = 3\nverbose = true\n", encoding="utf-8")
+
+    app = time_awareness.TimeAwareness(app_dir=tmp_path, log_to_terminal=True)
+
+    assert app.config.idle_threshold_minutes == 3
+    assert app.config.verbose is True
+
+
+def test_config_reaches_the_daemon(tmp_path, use_in_memory_db):
+    config = Config(idle_threshold_minutes=3, monitor_lock_and_sleep=False)
+
+    app = time_awareness.TimeAwareness(app_dir=tmp_path, log_to_terminal=True, config=config)
+
+    assert app._daemon._end_session_idle_threshold == datetime.timedelta(minutes=3)
+    assert app._daemon._monitor_lock_and_sleep is False
+
+
+def test_daemon_loop_runs_with_the_configured_intervals(tmp_path, use_in_memory_db, monkeypatch):
+    config = Config(poll_interval_seconds=1.5, sleep_detection_threshold_seconds=12, verbose=True)
+    app = time_awareness.TimeAwareness(app_dir=tmp_path, log_to_terminal=True, config=config)
+
+    captured = {}
+    monkeypatch.setattr(app._daemon, "run", lambda **kwargs: captured.update(kwargs))
+    app._run_daemon_loop()
+
+    assert captured == {
+        "poll_interval": 1.5,
+        "sleep_detection_threshold": 12,
+        "verbose": True,
+    }
+
+
+# ------------------------------
+# Tracking lock
+# ------------------------------
+def test_read_only_instance_does_not_take_the_lock(tmp_path, use_in_memory_db):
+    time_awareness.TimeAwareness(app_dir=tmp_path, log_to_terminal=True)
+    assert owner_pid(tmp_path) is None
+
+
+def test_start_daemon_takes_the_lock_and_stop_releases_it(tmp_path, use_in_memory_db):
+    import os
+
+    app = time_awareness.TimeAwareness(app_dir=tmp_path, start_daemon=True, log_to_terminal=True)
+    try:
+        assert owner_pid(tmp_path) == os.getpid()
+    finally:
+        app.stop_daemon()
+
+    assert owner_pid(tmp_path) is None
+
+
+def test_second_tracker_in_the_same_app_dir_is_refused(tmp_path, use_in_memory_db):
+    first = time_awareness.TimeAwareness(app_dir=tmp_path, start_daemon=True, log_to_terminal=True)
+    try:
+        with pytest.raises(TrackerAlreadyRunningError):
+            time_awareness.TimeAwareness(app_dir=tmp_path, start_daemon=True, log_to_terminal=True)
+    finally:
+        first.stop_daemon()
+
+
+def test_run_daemon_releases_the_lock_when_it_returns(tmp_path, use_in_memory_db):
+    app = time_awareness.TimeAwareness(app_dir=tmp_path, log_to_terminal=True)
+    app.request_daemon_stop()  # make run() exit at the first loop check
+
+    app.run_daemon()
+
+    assert owner_pid(tmp_path) is None
+
+
+def test_run_daemon_releases_the_lock_on_failure(tmp_path, use_in_memory_db, monkeypatch):
+    app = time_awareness.TimeAwareness(app_dir=tmp_path, log_to_terminal=True)
+
+    def boom(**kwargs):
+        raise RuntimeError("daemon blew up")
+
+    monkeypatch.setattr(app._daemon, "run", boom)
+    with pytest.raises(RuntimeError):
+        app.run_daemon()
+
+    assert owner_pid(tmp_path) is None
+
+
+# ------------------------------
+# reload_state
+# ------------------------------
+def test_reload_state_picks_up_another_process_changes(app):
+    assert app.current_session_info(verbose=False) is None
+
+    started = datetime.datetime.now().replace(microsecond=0)
+    set_metadata_bulk({"current_session": started.isoformat()})
+
+    app.reload_state()
+
+    info = app.current_session_info(verbose=False)
+    assert info is not None
+    assert info[0] == started
